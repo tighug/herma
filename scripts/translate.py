@@ -51,6 +51,7 @@ class ApplyOutcome:
     failed_chunks: list[str] = field(default_factory=list)
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
+    dropped_stale_hash_ids: list[str] = field(default_factory=list)
 
 
 def apply_results(
@@ -156,16 +157,48 @@ def pending_batch_path(project_dir, jsonl_path) -> Path:
 
 
 def save_pending_batch(state_path, batch_id: str, chunks: list[list[dict]]) -> None:
-    """投入済みバッチのIDと送信idを保存する。中断後の再アタッチに使う。"""
+    """投入済みバッチのIDと送信id・送信時hashを保存する。中断後の再アタッチに使う。
+
+    hashも一緒に保存するのは、再アタッチまでの間に tl-extract が再実行されて
+    原文が変わっていた場合に検出するため（resolve_pending_sent_ids参照）。
+    """
     state_path = Path(state_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "batch_id": batch_id,
         "sent_ids_by_chunk": {
-            f"chunk-{i}": [e["id"] for e in chunk] for i, chunk in enumerate(chunks)
+            f"chunk-{i}": [{"id": e["id"], "hash": e["hash"]} for e in chunk]
+            for i, chunk in enumerate(chunks)
         },
     }
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def resolve_pending_sent_ids(
+    rows: list[dict], pending_sent_ids_by_chunk: dict[str, list[dict]]
+) -> tuple[dict[str, set[str]], list[str]]:
+    """再アタッチ時、送信時hashと現在のrowのhashを突き合わせる。
+
+    バッチ投入後に tl-extract が再実行されて原文が変わった（hashが違う）idや、
+    rowsから消えたidは「送信済み」から除外する。除外されたidは、モデルから
+    応答が届いても apply_results 側で「送っていないid」として拒否され、
+    古い原文に対する訳が書き込まれるのを防ぐ。
+    """
+    by_id = {r["id"]: r for r in rows}
+    filtered: dict[str, set[str]] = {}
+    dropped: list[str] = []
+
+    for chunk_key, sent_entries in pending_sent_ids_by_chunk.items():
+        kept: set[str] = set()
+        for sent in sent_entries:
+            row = by_id.get(sent["id"])
+            if row is not None and row.get("hash") == sent["hash"]:
+                kept.add(sent["id"])
+            else:
+                dropped.append(sent["id"])
+        filtered[chunk_key] = kept
+
+    return filtered, dropped
 
 
 def load_pending_batch(state_path) -> dict | None:
@@ -269,9 +302,14 @@ def run(project_dir) -> ApplyOutcome:
 
         if pending is not None:
             # 前回の実行が中断していた場合、新規投入せず同じバッチに再アタッチする
-            # （バッチは最大24時間かかり得るため、ここで再投入すると二重課金になる）
+            # （バッチは最大24時間かかり得るため、ここで再投入すると二重課金になる）。
+            # 再アタッチまでの間にtl-extractが再実行され原文が変わったidは、
+            # 古い原文への訳を書き込まないよう送信済み扱いから除外する
             batch_id = pending["batch_id"]
-            sent_ids_by_chunk = {k: set(v) for k, v in pending["sent_ids_by_chunk"].items()}
+            sent_ids_by_chunk, dropped = resolve_pending_sent_ids(
+                rows, pending["sent_ids_by_chunk"]
+            )
+            total.dropped_stale_hash_ids.extend(dropped)
         else:
             targets = select_translatable(rows)
             if not targets:
@@ -308,6 +346,11 @@ if __name__ == "__main__":
         print(f"警告: 応答が無かったid（未訳のまま）: {outcome.missing_ids}")
     if outcome.failed_chunks:
         print(f"警告: 失敗したチャンク: {outcome.failed_chunks}")
+    if outcome.dropped_stale_hash_ids:
+        print(
+            "警告: 再アタッチ中に原文が変わっていたため翻訳を破棄したid "
+            f"（tl-extract→tl-translateを再実行してください）: {outcome.dropped_stale_hash_ids}"
+        )
     print(
         f"キャッシュ: read={outcome.cache_read_input_tokens} "
         f"creation={outcome.cache_creation_input_tokens}"

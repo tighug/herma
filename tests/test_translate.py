@@ -186,15 +186,18 @@ def test_cli_entrypoint_does_not_hit_module_not_found_when_run_as_a_script(tmp_p
 def test_save_pending_batch_then_load_pending_batch_roundtrips(tmp_path):
     state_path = tmp_path / ".tl" / "batch-dialogue.json"
     chunks = [
-        [{"id": "a", "src": "Hi"}, {"id": "b", "src": "Bye"}],
-        [{"id": "c", "src": "Yo"}],
+        [{"id": "a", "src": "Hi", "hash": "h1"}, {"id": "b", "src": "Bye", "hash": "h2"}],
+        [{"id": "c", "src": "Yo", "hash": "h3"}],
     ]
 
     translate.save_pending_batch(state_path, "batch_123", chunks)
     loaded = translate.load_pending_batch(state_path)
 
     assert loaded["batch_id"] == "batch_123"
-    assert loaded["sent_ids_by_chunk"] == {"chunk-0": ["a", "b"], "chunk-1": ["c"]}
+    assert loaded["sent_ids_by_chunk"] == {
+        "chunk-0": [{"id": "a", "hash": "h1"}, {"id": "b", "hash": "h2"}],
+        "chunk-1": [{"id": "c", "hash": "h3"}],
+    }
 
 
 def test_load_pending_batch_returns_none_when_no_state_file(tmp_path):
@@ -203,7 +206,9 @@ def test_load_pending_batch_returns_none_when_no_state_file(tmp_path):
 
 def test_clear_pending_batch_removes_the_state_file(tmp_path):
     state_path = tmp_path / ".tl" / "batch-dialogue.json"
-    translate.save_pending_batch(state_path, "batch_123", [[{"id": "a", "src": "Hi"}]])
+    translate.save_pending_batch(
+        state_path, "batch_123", [[{"id": "a", "src": "Hi", "hash": "h1"}]]
+    )
 
     translate.clear_pending_batch(state_path)
 
@@ -309,3 +314,67 @@ def test_fetch_and_apply_results_records_failed_chunk_without_raising():
 
     assert rows[0]["status"] == "untranslated"
     assert outcome.failed_chunks == ["chunk-0 (errored)"]
+
+
+def test_resolve_pending_sent_ids_keeps_ids_whose_hash_is_unchanged():
+    rows = [{"id": "a", "hash": "h1", "status": "untranslated"}]
+    pending_sent_ids_by_chunk = {"chunk-0": [{"id": "a", "hash": "h1"}]}
+
+    sent_ids_by_chunk, dropped = translate.resolve_pending_sent_ids(
+        rows, pending_sent_ids_by_chunk
+    )
+
+    assert sent_ids_by_chunk == {"chunk-0": {"a"}}
+    assert dropped == []
+
+
+def test_resolve_pending_sent_ids_drops_ids_whose_source_changed_while_batch_was_in_flight():
+    # バッチ投入後、tl-extractの再実行で原文が変わり、hashが送信時と食い違っている
+    rows = [{"id": "a", "hash": "h1-new", "status": "stale"}]
+    pending_sent_ids_by_chunk = {"chunk-0": [{"id": "a", "hash": "h1-old"}]}
+
+    sent_ids_by_chunk, dropped = translate.resolve_pending_sent_ids(
+        rows, pending_sent_ids_by_chunk
+    )
+
+    assert sent_ids_by_chunk == {"chunk-0": set()}
+    assert dropped == ["a"]
+
+
+def test_resolve_pending_sent_ids_drops_ids_no_longer_present_in_rows():
+    rows: list[dict] = []  # idが行ごと削除された（あり得ないはずだが防御的に扱う）
+    pending_sent_ids_by_chunk = {"chunk-0": [{"id": "a", "hash": "h1"}]}
+
+    sent_ids_by_chunk, dropped = translate.resolve_pending_sent_ids(
+        rows, pending_sent_ids_by_chunk
+    )
+
+    assert dropped == ["a"]
+
+
+def test_apply_results_never_writes_translation_when_id_dropped_by_hash_mismatch():
+    # resolve_pending_sent_idsでhash不一致により除外されたidは、応答が届いても
+    # 「送っていないid」として扱われ、古い原文に対する訳が書き込まれてはならない
+    rows = [
+        {
+            "id": "a",
+            "src": "Hi there {name}",  # 新原文
+            "tgt": "",
+            "status": "stale",
+            "prev_tgt": "こんにちは",
+            "hash": "h1-new",
+        }
+    ]
+    pending_sent_ids_by_chunk = {"chunk-0": [{"id": "a", "hash": "h1-old"}]}
+    sent_ids_by_chunk, dropped = translate.resolve_pending_sent_ids(
+        rows, pending_sent_ids_by_chunk
+    )
+    # モデルは旧原文("Hi")に対する訳で応答してくる
+    results = [{"id": "a", "tgt": "こんにちは"}]
+
+    outcome = translate.apply_results(rows, sent_ids_by_chunk["chunk-0"], results)
+
+    assert rows[0]["tgt"] == ""  # 書き込まれていない
+    assert rows[0]["status"] == "stale"  # ステータスも変わっていない
+    assert outcome.rejected_unknown_ids == ["a"]
+    assert dropped == ["a"]

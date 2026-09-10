@@ -68,4 +68,18 @@ uv run pytest
 往復テスト（extract→translate→inject でプレースホルダーが保持されること等）に使う
 架空ゲームデータで、`tl-extract`/`tl-inject` の実装例も兼ねる。
 
+### プラグインの動作確認（ローカル）
+
+```bash
+claude plugin marketplace add /path/to/game-translation
+claude plugin install game-translation@game-translation
+claude plugin validate .
+```
+
+**注意**: このリポジトリをローカルパスのマーケットプレイスとして使う場合、
+`claude plugin update` は `plugin.json` の `version` を上げない限り再コピーしない。
+コードを変更したら `claude plugin uninstall game-translation@game-translation` →
+`claude plugin install game-translation@game-translation` で最新のコピーに入れ替えること
+（さもないと動作確認しているのが古いコードのままになる）。
+
 設計の詳細は `docs/superpowers/specs/2026-09-11-game-translation-plugin-design.md` を参照。
