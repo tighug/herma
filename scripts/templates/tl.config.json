@@ -1,0 +1,14 @@
+{
+  "game": "<GAME_NAME>",
+  "source_lang": "en",
+  "target_lang": "ja",
+  "model": "claude-opus-5",
+  "chunk_size": 30,
+  "placeholder_patterns": [
+    "\\{[^}]*\\}",
+    "%[sd]",
+    "<[^>]+>",
+    "\\\\n"
+  ],
+  "max_len_ratio": null
+}
