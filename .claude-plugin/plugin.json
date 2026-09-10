@@ -1,0 +1,16 @@
+{
+  "name": "game-translation",
+  "description": "Reusable Claude Code toolkit for translating games and mods: shared JSONL entry format, batch translation via the Anthropic Message Batches API, and placeholder/glossary QA. Extraction and injection adapters are written per game.",
+  "version": "0.1.0",
+  "author": {
+    "name": "tighug",
+    "email": "tighug.4696@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "translation",
+    "localization",
+    "games",
+    "mods"
+  ]
+}

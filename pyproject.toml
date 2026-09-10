@@ -1,0 +1,16 @@
+[project]
+name = "game-translation"
+version = "0.1.0"
+description = "Claude Code plugin for game/mod translation workflows"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.84.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
