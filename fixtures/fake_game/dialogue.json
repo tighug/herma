@@ -1,0 +1,11 @@
+{
+  "scenes": {
+    "scene01": {
+      "0001": "Hello, {playerName}!\nWelcome to the village.",
+      "0002": "<color=#ffffff>Press A to continue</color>"
+    },
+    "scene02": {
+      "0001": "Goodbye, {playerName}."
+    }
+  }
+}
