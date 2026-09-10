@@ -74,6 +74,18 @@ def test_find_inconsistent_translations_detects_same_src_different_tgt():
     assert result == {"Attack": ["攻撃", "こうげき"]}
 
 
+def test_find_inconsistent_translations_ignores_untranslated_rows():
+    # 同じsrcの片方がまだ未訳(tgt=="")なだけで、不統一として誤検知してはならない
+    rows = [
+        {"id": "a1", "src": "Attack", "tgt": "攻撃"},
+        {"id": "a2", "src": "Attack", "tgt": ""},
+    ]
+
+    result = validate.find_inconsistent_translations(rows)
+
+    assert result == {}
+
+
 def test_check_length_ratio_fails_when_tgt_too_long():
     assert validate.check_length_ratio("Hi", "こんにちはこんにちは", max_ratio=2.0) is False
 
@@ -123,6 +135,42 @@ def test_run_validation_skips_placeholder_check_for_untranslated_entries():
     kinds = [v.kind for v in report.violations]
     assert "placeholder" not in kinds
     assert "untranslated" in kinds
+    # untranslatedは翻訳待ちの正常状態であり、QAで needs-review に落として
+    # 翻訳対象(tl-translateのTRANSLATABLE_STATUSES)から外してはならない
+    assert rows[0]["status"] == "untranslated"
+
+
+def test_run_validation_does_not_demote_stale_entries_out_of_translation_queue():
+    # staleはtgtが旧訳・srcが新原文なので、プレースホルダー等の機械チェックは
+    # 誤検知しうる。それでも stale というステータス自体は保持し、
+    # tl-translate の再翻訳対象から外してはならない
+    rows = [
+        {
+            "id": "a",
+            "src": "Hi there {name}",
+            "tgt": "こんにちは",  # 旧原文"Hi"に対する旧訳。{name}が無くて当然
+            "status": "stale",
+        }
+    ]
+
+    report = validate.run_validation(rows, patterns=PATTERNS, glossary={}, max_len_ratio=None)
+
+    assert rows[0]["status"] == "stale"
+
+
+def test_run_validation_does_not_unfreeze_locked_entries():
+    rows = [
+        {
+            "id": "a",
+            "src": "Hi {name}",
+            "tgt": "こんにちは",  # 意図的に{name}を訳文へ含めない固定訳
+            "status": "locked",
+        }
+    ]
+
+    validate.run_validation(rows, patterns=PATTERNS, glossary={}, max_len_ratio=None)
+
+    assert rows[0]["status"] == "locked"
 
 
 def test_run_validation_detects_glossary_violation():

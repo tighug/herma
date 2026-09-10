@@ -7,14 +7,22 @@ description: Use when starting a new game/mod translation project, or when the u
 
 ゲーム翻訳プロジェクトのディレクトリ構造と設定雛形を、対象ディレクトリに展開する。
 
+## プラグインルートの特定
+
+このスキルの起動時に示される「Base directory for this skill」から `/skills/tl-init` を
+除いたパスが、このプラグイン（game-translation）のルートディレクトリ。以降「プラグインルート」
+と書いたら、そのパスを指す（`${CLAUDE_PLUGIN_ROOT}` という環境変数は hooks 実行時にしか
+展開されないため、コマンド実行時は実際の絶対パスに置き換えること）。
+
 ## 手順
 
 1. **対象ディレクトリを確認** — 引数で指定されていなければユーザーに聞く（新規ディレクトリでも既存でもよい）
 2. **ゲーム情報をヒアリング** — 以下をユーザーに確認する
    - ゲーム名
    - 原文の言語・訳文の言語（デフォルト: en → ja）
-   - プレースホルダーの記法（例: `{playerName}`、`%s`、`<color=...>`タグなど）。`fixtures/fake_game/dialogue.json` の例を見せて説明するとよい
-3. **雛形を展開** — `${CLAUDE_PLUGIN_ROOT}/scripts/templates/` の各ファイルを対象ディレクトリにコピーする
+   - プレースホルダーの記法（例: `{playerName}`、`%s`、`<color=...>`タグなど）。プラグインルートの
+     `fixtures/fake_game/dialogue.json` の例を見せて説明するとよい
+3. **雛形を展開** — プラグインルートの `scripts/templates/` の各ファイルを対象ディレクトリにコピーする
    - `tl.config.json` — ヒアリング内容で `<GAME_NAME>` 等のプレースホルダーを埋める
    - `CLAUDE.md` — ゲーム名を埋め、翻訳方針は空欄のまま（後で `tl-extract`/翻訳中に育てていく）
    - `glossary.tsv`

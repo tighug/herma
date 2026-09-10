@@ -36,9 +36,11 @@ def check_glossary(src: str, tgt: str, glossary: dict[str, str]) -> bool:
 
 
 def find_inconsistent_translations(rows: list[dict]) -> dict[str, list[str]]:
-    """同一原文に対して異なる訳文が使われている箇所を検出する。"""
+    """同一原文に対して異なる訳文が使われている箇所を検出する。未訳行は対象外。"""
     by_src: dict[str, list[str]] = {}
     for row in rows:
+        if row["tgt"] == "":
+            continue  # 未訳なだけの行を不統一として誤検知しない
         by_src.setdefault(row["src"], [])
         if row["tgt"] not in by_src[row["src"]]:
             by_src[row["src"]].append(row["tgt"])
@@ -66,13 +68,24 @@ class Report:
     violations: list[Violation] = field(default_factory=list)
 
 
+# QAで違反が見つかった際に needs-review へ落としてよいステータス。
+# untranslated/stale は翻訳待ちの正常状態、locked は意図的な凍結なので、
+# ここに含めない（含めると tl-translate の対象から永久に外れてしまう）。
+MUTABLE_ON_VIOLATION_STATUSES = {"translated", "reviewed", "needs-review"}
+
+
 def run_validation(
     rows: list[dict],
     patterns: list[str],
     glossary: dict[str, str],
     max_len_ratio: float | None,
 ) -> Report:
-    """全エントリを検証し、違反したものを needs-review に落としてレポートを返す。"""
+    """全エントリを検証し、違反したものを needs-review に落としてレポートを返す。
+
+    ステータスの変更は MUTABLE_ON_VIOLATION_STATUSES のエントリにのみ行う。
+    untranslated/stale/locked は違反として報告はするが、ステータスは変更しない
+    （変更すると翻訳待ちの行が永久にキューから外れてしまうため）。
+    """
     report = Report()
 
     for row in rows:
@@ -92,7 +105,7 @@ def run_validation(
             if not check_length_ratio(src, tgt, max_len_ratio):
                 row_violations.append(Violation(entry_id, "length", "訳文が長すぎます"))
 
-        if row_violations:
+        if row_violations and row["status"] in MUTABLE_ON_VIOLATION_STATUSES:
             row["status"] = "needs-review"
         report.violations.extend(row_violations)
 

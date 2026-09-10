@@ -159,3 +159,153 @@ def test_build_batch_requests_creates_one_request_per_chunk_with_custom_id():
     assert requests[0]["params"]["model"] == "claude-opus-5"
     assert requests[0]["params"]["system"] == system_blocks
     assert requests[0]["params"]["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_cli_entrypoint_does_not_hit_module_not_found_when_run_as_a_script(tmp_path):
+    """scripts/translate.py を直接実行しても `scripts` パッケージをimportできること。
+
+    実行ディレクトリに依存して sys.path が変わり、CLIとしての実行だけが
+    ImportError になる回帰を防ぐ。
+    """
+    import subprocess
+    import sys as sys_mod
+    from pathlib import Path as PathAlias
+
+    translate_py = PathAlias(__file__).parent.parent / "scripts" / "translate.py"
+
+    result = subprocess.run(
+        [sys_mod.executable, str(translate_py), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # プラグインのルート以外の場所から実行しても壊れないことを確認
+    )
+
+    assert "ModuleNotFoundError" not in result.stderr
+
+
+def test_save_pending_batch_then_load_pending_batch_roundtrips(tmp_path):
+    state_path = tmp_path / ".tl" / "batch-dialogue.json"
+    chunks = [
+        [{"id": "a", "src": "Hi"}, {"id": "b", "src": "Bye"}],
+        [{"id": "c", "src": "Yo"}],
+    ]
+
+    translate.save_pending_batch(state_path, "batch_123", chunks)
+    loaded = translate.load_pending_batch(state_path)
+
+    assert loaded["batch_id"] == "batch_123"
+    assert loaded["sent_ids_by_chunk"] == {"chunk-0": ["a", "b"], "chunk-1": ["c"]}
+
+
+def test_load_pending_batch_returns_none_when_no_state_file(tmp_path):
+    assert translate.load_pending_batch(tmp_path / "does-not-exist.json") is None
+
+
+def test_clear_pending_batch_removes_the_state_file(tmp_path):
+    state_path = tmp_path / ".tl" / "batch-dialogue.json"
+    translate.save_pending_batch(state_path, "batch_123", [[{"id": "a", "src": "Hi"}]])
+
+    translate.clear_pending_batch(state_path)
+
+    assert not state_path.exists()
+
+
+def test_clear_pending_batch_is_a_noop_when_file_already_gone(tmp_path):
+    translate.clear_pending_batch(tmp_path / "does-not-exist.json")  # 例外を投げないこと
+
+
+def test_pending_batch_path_is_scoped_per_entries_file(tmp_path):
+    project_dir = tmp_path
+
+    path = translate.pending_batch_path(project_dir, project_dir / "entries" / "dialogue.jsonl")
+
+    assert path == project_dir / ".tl" / "batch-dialogue.json"
+
+
+class _FakeContentBlock:
+    def __init__(self, text):
+        self.type = "text"
+        self.text = text
+
+
+class _FakeUsage:
+    def __init__(self, cache_read=0, cache_creation=0):
+        self.cache_read_input_tokens = cache_read
+        self.cache_creation_input_tokens = cache_creation
+
+
+class _FakeMessage:
+    def __init__(self, text, usage=None):
+        self.content = [_FakeContentBlock(text)]
+        self.usage = usage
+
+
+class _FakeResult:
+    def __init__(self, result_type, message=None):
+        self.type = result_type
+        self.message = message
+
+
+class _FakeBatchResult:
+    def __init__(self, custom_id, result):
+        self.custom_id = custom_id
+        self.result = result
+
+
+class _FakeBatchesResults:
+    def __init__(self, results):
+        self._results = results
+
+    def __call__(self, batch_id):
+        return iter(self._results)
+
+
+class _FakeClient:
+    def __init__(self, results):
+        self.messages = type("M", (), {})()
+        self.messages.batches = type("B", (), {})()
+        self.messages.batches.results = _FakeBatchesResults(results)
+
+
+def test_fetch_and_apply_results_writes_back_by_custom_id_and_id():
+    rows = [
+        {"id": "a", "src": "Hi", "tgt": "", "status": "untranslated", "prev_tgt": None},
+        {"id": "b", "src": "Yo", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids_by_chunk = {"chunk-0": {"a"}, "chunk-1": {"b"}}
+    client = _FakeClient(
+        [
+            _FakeBatchResult(
+                "chunk-0",
+                _FakeResult(
+                    "succeeded",
+                    _FakeMessage('[{"id": "a", "tgt": "やあ"}]', _FakeUsage(cache_read=100)),
+                ),
+            ),
+            _FakeBatchResult(
+                "chunk-1",
+                _FakeResult(
+                    "succeeded",
+                    _FakeMessage('[{"id": "b", "tgt": "よう"}]', _FakeUsage(cache_read=50)),
+                ),
+            ),
+        ]
+    )
+
+    outcome = translate.fetch_and_apply_results(client, "batch_x", rows, sent_ids_by_chunk)
+
+    assert rows[0]["tgt"] == "やあ"
+    assert rows[1]["tgt"] == "よう"
+    assert outcome.cache_read_input_tokens == 150
+    assert outcome.failed_chunks == []
+
+
+def test_fetch_and_apply_results_records_failed_chunk_without_raising():
+    rows = [{"id": "a", "src": "Hi", "tgt": "", "status": "untranslated", "prev_tgt": None}]
+    sent_ids_by_chunk = {"chunk-0": {"a"}}
+    client = _FakeClient([_FakeBatchResult("chunk-0", _FakeResult("errored"))])
+
+    outcome = translate.fetch_and_apply_results(client, "batch_x", rows, sent_ids_by_chunk)
+
+    assert rows[0]["status"] == "untranslated"
+    assert outcome.failed_chunks == ["chunk-0 (errored)"]

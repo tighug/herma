@@ -10,9 +10,16 @@ description: Use when writing a translation write-back adapter for a specific ga
 
 **重要**: `tl-extract` の抽出処理の逆変換になる。抽出時に決めたid設計をそのまま使う。
 
+## プラグインルートの特定
+
+このスキルの起動時に示される「Base directory for this skill」から `/skills/tl-inject` を
+除いたパスが、このプラグイン（game-translation）のルートディレクトリ。以降「プラグインルート」
+と書いたら、そのパスを指す（`${CLAUDE_PLUGIN_ROOT}` という環境変数は hooks 実行時にしか
+展開されないため、コマンド実行時は実際の絶対パスに置き換えること）。
+
 ## 手順
 
-1. **実装例を参照** — `${CLAUDE_PLUGIN_ROOT}/fixtures/fake_game/inject.py` を読む。
+1. **実装例を参照** — プラグインルートの `fixtures/fake_game/inject.py` を読む。
    `extract.py` と対になる最小限のパターンを示している
 2. **`scripts/inject.py` を書く** — `entries/*.jsonl` を読み、id をキーに元の構造へ
    訳文（`tgt`。空なら`src`のまま）を書き戻す関数を実装する
