@@ -1,0 +1,161 @@
+"""translate.py のテスト。バッチ翻訳対象の選定・チャンク化・id照合による書き戻しを検証する。"""
+from scripts import translate
+
+
+def test_select_translatable_includes_untranslated_and_stale():
+    rows = [
+        {"id": "a", "status": "untranslated"},
+        {"id": "b", "status": "stale"},
+        {"id": "c", "status": "translated"},
+        {"id": "d", "status": "locked"},
+        {"id": "e", "status": "needs-review"},
+    ]
+
+    selected = translate.select_translatable(rows)
+
+    assert [r["id"] for r in selected] == ["a", "b"]
+
+
+def test_chunk_entries_splits_into_groups_of_given_size():
+    rows = [{"id": str(i)} for i in range(5)]
+
+    chunks = translate.chunk_entries(rows, chunk_size=2)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["0", "1"], ["2", "3"], ["4"]]
+
+
+def test_apply_results_writes_back_matching_ids_and_marks_translated():
+    rows = [
+        {"id": "a", "src": "Hello", "tgt": "", "status": "untranslated", "prev_tgt": None},
+        {"id": "b", "src": "World", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids = {"a", "b"}
+    results = [{"id": "a", "tgt": "こんにちは"}, {"id": "b", "tgt": "世界"}]
+
+    outcome = translate.apply_results(rows, sent_ids, results)
+
+    assert rows[0]["tgt"] == "こんにちは"
+    assert rows[0]["status"] == "translated"
+    assert rows[1]["tgt"] == "世界"
+    assert outcome.applied == ["a", "b"]
+    assert outcome.rejected_unknown_ids == []
+    assert outcome.missing_ids == []
+
+
+def test_apply_results_rejects_id_that_was_not_sent_in_this_chunk():
+    rows = [
+        {"id": "a", "src": "Hello", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids = {"a"}
+    # "z" はこのチャンクが送っていないid（他チャンク宛や不正な応答を想定）
+    results = [{"id": "a", "tgt": "こんにちは"}, {"id": "z", "tgt": "何か"}]
+
+    outcome = translate.apply_results(rows, sent_ids, results)
+
+    assert rows[0]["tgt"] == "こんにちは"
+    assert outcome.rejected_unknown_ids == ["z"]
+    # "z" 用のエントリはrowsに存在しないため、どこにも書き込まれていないこと
+    assert all(r["id"] != "z" for r in rows)
+
+
+def test_apply_results_leaves_entry_untranslated_when_id_missing_from_response():
+    rows = [
+        {"id": "a", "src": "Hello", "tgt": "", "status": "untranslated", "prev_tgt": None},
+        {"id": "b", "src": "World", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids = {"a", "b"}
+    results = [{"id": "a", "tgt": "こんにちは"}]  # "b" の応答が欠落
+
+    outcome = translate.apply_results(rows, sent_ids, results)
+
+    assert rows[1]["status"] == "untranslated"
+    assert rows[1]["tgt"] == ""
+    assert outcome.missing_ids == ["b"]
+
+
+def test_apply_results_clears_prev_tgt_and_ignores_write_back_by_position():
+    # stale状態のエントリを、応答順が送信順と食い違う形で書き戻す
+    rows = [
+        {"id": "a", "src": "Hello there", "tgt": "こんにちは", "status": "stale", "prev_tgt": "こんにちは"},
+        {"id": "b", "src": "Goodbye", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids = {"a", "b"}
+    # 応答はb, aの順（送信順と逆）で返ってきても、idで正しく引き当てられること
+    results = [{"id": "b", "tgt": "さようなら"}, {"id": "a", "tgt": "やあ"}]
+
+    translate.apply_results(rows, sent_ids, results)
+
+    assert rows[0]["tgt"] == "やあ"
+    assert rows[0]["prev_tgt"] is None
+    assert rows[1]["tgt"] == "さようなら"
+
+
+def test_build_user_content_includes_id_src_ctx_for_new_entry():
+    chunk = [{"id": "a", "src": "Hello", "ctx": "greeting", "status": "untranslated", "prev_tgt": None}]
+
+    content = translate.build_user_content(chunk)
+
+    import json
+    parsed = json.loads(content)
+    assert parsed == [{"id": "a", "src": "Hello", "ctx": "greeting"}]
+
+
+def test_build_user_content_includes_prev_tgt_hint_for_stale_entry():
+    chunk = [
+        {
+            "id": "a",
+            "src": "Hello there",
+            "ctx": "greeting",
+            "status": "stale",
+            "prev_tgt": "こんにちは",
+        }
+    ]
+
+    content = translate.build_user_content(chunk)
+
+    import json
+    parsed = json.loads(content)
+    assert parsed == [
+        {"id": "a", "src": "Hello there", "ctx": "greeting", "prev_tgt": "こんにちは"}
+    ]
+
+
+def test_build_system_blocks_caches_last_block():
+    blocks = translate.build_system_blocks(
+        style_guide="丁寧語で統一する。",
+        glossary_tsv="Sword of Dawn\t暁の剣\t固有名詞",
+        patterns=["\\{[^}]*\\}"],
+    )
+
+    assert blocks[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    joined = " ".join(b["text"] for b in blocks)
+    assert "丁寧語で統一する" in joined
+    assert "暁の剣" in joined
+
+
+def test_parse_response_text_loads_json_array():
+    text = '[{"id": "a", "tgt": "こんにちは"}]'
+
+    assert translate.parse_response_text(text) == [{"id": "a", "tgt": "こんにちは"}]
+
+
+def test_parse_response_text_extracts_json_from_surrounding_text():
+    text = 'ここに結果があります:\n[{"id": "a", "tgt": "こんにちは"}]\n以上です。'
+
+    assert translate.parse_response_text(text) == [{"id": "a", "tgt": "こんにちは"}]
+
+
+def test_build_batch_requests_creates_one_request_per_chunk_with_custom_id():
+    chunks = [
+        [{"id": "a", "src": "Hello", "ctx": "", "status": "untranslated", "prev_tgt": None}],
+        [{"id": "b", "src": "World", "ctx": "", "status": "untranslated", "prev_tgt": None}],
+    ]
+    system_blocks = translate.build_system_blocks("方針", "用語集", ["\\{[^}]*\\}"])
+    cfg = {"model": "claude-opus-5"}
+
+    requests = translate.build_batch_requests(chunks, cfg, system_blocks)
+
+    assert [r["custom_id"] for r in requests] == ["chunk-0", "chunk-1"]
+    assert requests[0]["params"]["model"] == "claude-opus-5"
+    assert requests[0]["params"]["system"] == system_blocks
+    assert requests[0]["params"]["output_config"]["format"]["type"] == "json_schema"
