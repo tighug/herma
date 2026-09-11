@@ -139,12 +139,6 @@ def test_parse_response_text_loads_json_array():
     assert translate.parse_response_text(text) == [{"id": "a", "tgt": "こんにちは"}]
 
 
-def test_parse_response_text_extracts_json_from_surrounding_text():
-    text = 'ここに結果があります:\n[{"id": "a", "tgt": "こんにちは"}]\n以上です。'
-
-    assert translate.parse_response_text(text) == [{"id": "a", "tgt": "こんにちは"}]
-
-
 def test_build_batch_requests_creates_one_request_per_chunk_with_custom_id():
     chunks = [
         [{"id": "a", "src": "Hello", "ctx": "", "status": "untranslated", "prev_tgt": None}],

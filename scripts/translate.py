@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -141,14 +140,12 @@ def build_batch_requests(chunks: list[list[dict]], cfg: dict, system_blocks: lis
 
 
 def parse_response_text(text: str) -> list[dict]:
-    """モデル応答のテキストからJSON配列を取り出す。前後に余計な文章があっても抽出する。"""
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
+    """モデル応答のテキストからJSON配列を取り出す。
+
+    output_config.format(json_schema) 指定時、最初のテキストブロックは
+    有効なJSONであることがAPI仕様として保証されるため、素の json.loads で十分。
+    """
+    return json.loads(text)
 
 
 def pending_batch_path(project_dir, jsonl_path) -> Path:
@@ -219,20 +216,13 @@ def clear_pending_batch(state_path) -> None:
 # --- ここから先はAnthropic SDKへの薄いラッパー（ネットワークI/O） ---
 
 
-def create_batch(client, requests: list) -> str:
-    """バッチを投入し、バッチIDを返す。"""
-    batch = client.messages.batches.create(requests=requests)
-    return batch.id
-
-
-def wait_for_batch(client, batch_id: str, poll_interval_sec: float = 10.0, sleep=None):
+def wait_for_batch(client, batch_id: str, poll_interval_sec: float = 10.0):
     """バッチが完了(processing_status == 'ended')するまでポーリングする。"""
-    _sleep = sleep or time.sleep
     while True:
         batch = client.messages.batches.retrieve(batch_id)
         if batch.processing_status == "ended":
             return batch
-        _sleep(poll_interval_sec)
+        time.sleep(poll_interval_sec)
 
 
 def fetch_and_apply_results(
@@ -261,7 +251,7 @@ def fetch_and_apply_results(
         text = next((b.text for b in message.content if b.type == "text"), "")
         try:
             parsed = parse_response_text(text)
-        except (json.JSONDecodeError, StopIteration):
+        except json.JSONDecodeError:
             total.failed_chunks.append(f"{result.custom_id} (unparsable response)")
             continue
         outcome = apply_results(rows, sent_ids, parsed)
@@ -316,7 +306,7 @@ def run(project_dir) -> ApplyOutcome:
                 continue
             chunks = chunk_entries(targets, cfg.get("chunk_size", 30))
             requests = build_batch_requests(chunks, cfg, system_blocks)
-            batch_id = create_batch(client, requests)
+            batch_id = client.messages.batches.create(requests=requests).id
             sent_ids_by_chunk = {
                 f"chunk-{i}": {e["id"] for e in chunk} for i, chunk in enumerate(chunks)
             }
