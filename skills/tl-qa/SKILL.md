@@ -11,7 +11,7 @@ description: Use when checking translation quality after batch translation, or w
 ## プラグインルートの特定
 
 このスキルの起動時に示される「Base directory for this skill」から `/skills/tl-qa` を
-除いたパスが、このプラグイン（game-translation）のルートディレクトリ。以降「プラグインルート」
+除いたパスが、このプラグイン（herma）のルートディレクトリ。以降「プラグインルート」
 と書いたら、そのパスを指す（`${CLAUDE_PLUGIN_ROOT}` という環境変数は hooks 実行時にしか
 展開されないため、コマンド実行時は実際の絶対パスに置き換えること）。
 

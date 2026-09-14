@@ -1,14 +1,14 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "game-translation",
-  "description": "Personal marketplace hosting the game-translation plugin",
+  "name": "herma",
+  "description": "Personal marketplace hosting the herma plugin",
   "owner": {
     "name": "tighug",
     "email": "tighug.4696@gmail.com"
   },
   "plugins": [
     {
-      "name": "game-translation",
+      "name": "herma",
       "description": "Reusable Claude Code toolkit for translating games and mods: shared JSONL entry format, batch translation via the Anthropic Message Batches API, and placeholder/glossary QA.",
       "version": "0.1.0",
       "source": "./",

@@ -1,5 +1,5 @@
 {
-  "name": "game-translation",
+  "name": "herma",
   "description": "Reusable Claude Code toolkit for translating games and mods: shared JSONL entry format, batch translation via the Anthropic Message Batches API, and placeholder/glossary QA. Extraction and injection adapters are written per game.",
   "version": "0.1.0",
   "author": {

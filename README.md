@@ -1,4 +1,4 @@
-# game-translation
+# herma
 
 ゲーム/Mod翻訳を汎用的に進めるための Claude Code プラグイン。
 
@@ -19,7 +19,7 @@
 
 ```
 /plugin marketplace add <このリポジトリのパス or URL>
-/plugin install game-translation
+/plugin install herma
 ```
 
 ## スキル
@@ -76,15 +76,13 @@ uv run pytest
 ### プラグインの動作確認（ローカル）
 
 ```bash
-claude plugin marketplace add /path/to/game-translation
-claude plugin install game-translation@game-translation
+claude plugin marketplace add /path/to/herma
+claude plugin install herma@herma
 claude plugin validate .
 ```
 
 **注意**: このリポジトリをローカルパスのマーケットプレイスとして使う場合、
 `claude plugin update` は `plugin.json` の `version` を上げない限り再コピーしない。
-コードを変更したら `claude plugin uninstall game-translation@game-translation` →
-`claude plugin install game-translation@game-translation` で最新のコピーに入れ替えること
+コードを変更したら `claude plugin uninstall herma@herma` →
+`claude plugin install herma@herma` で最新のコピーに入れ替えること
 （さもないと動作確認しているのが古いコードのままになる）。
-
-設計の詳細は `docs/superpowers/specs/2026-09-11-game-translation-plugin-design.md` を参照。

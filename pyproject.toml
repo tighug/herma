@@ -1,5 +1,5 @@
 [project]
-name = "game-translation"
+name = "herma"
 version = "0.1.0"
 description = "Claude Code plugin for game/mod translation workflows"
 requires-python = ">=3.10"
