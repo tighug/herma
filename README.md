@@ -2,10 +2,6 @@
 
 ゲーム/Mod翻訳を汎用的に進めるための Claude Code プラグイン。
 
-過去の翻訳プロジェクト（`tl_phonia_chmod`、`celesphonia`系、`grimshire`、`mercuria` など）は
-それぞれ別リポジトリで毎回ゼロから手順・ディレクトリ構成・品質チェックを組み直していた。
-このプラグインはその共通部分を切り出したもの。
-
 ## 設計思想
 
 対象ゲームの形式は毎回バラバラなので、**再利用できるのは中間層だけ**と割り切っている。
@@ -28,20 +24,29 @@
 
 ## スキル
 
-| スキル | 役割 |
-| --- | --- |
-| `tl-init` | 新規ゲーム翻訳プロジェクトの雛形（`tl.config.json`・`CLAUDE.md`・ディレクトリ構造）を展開する |
-| `tl-extract` | 対象ゲームのテキスト形式を調査し、抽出アダプタ（`scripts/extract.py`）を書く |
-| `tl-translate` | Message Batches API で未翻訳/staleなエントリを一括翻訳する |
-| `tl-qa` | プレースホルダー保持・用語集遵守・訳文の不統一・長さ超過を機械検証する |
-| `tl-inject` | 訳文を元の形式へ書き戻すアダプタ（`scripts/inject.py`）を書く |
+| スキル         | 役割                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------- |
+| `tl-init`      | 新規ゲーム翻訳プロジェクトの雛形（`tl.config.json`・`CLAUDE.md`・ディレクトリ構造）を展開する |
+| `tl-extract`   | 対象ゲームのテキスト形式を調査し、抽出アダプタ（`scripts/extract.py`）を書く                  |
+| `tl-translate` | Message Batches API で未翻訳/staleなエントリを一括翻訳する                                    |
+| `tl-qa`        | プレースホルダー保持・用語集遵守・訳文の不統一・長さ超過を機械検証する                        |
+| `tl-inject`    | 訳文を元の形式へ書き戻すアダプタ（`scripts/inject.py`）を書く                                 |
 
 ## 中間フォーマット
 
 `entries/*.jsonl`、1エントリ1行:
 
 ```json
-{"id":"scene01/0012","src":"Hello, {playerName}!","tgt":"やあ、{playerName}！","ctx":"村人に話しかける場面","status":"translated","hash":"a1b2c3d4","prev_tgt":null,"note":""}
+{
+  "id": "scene01/0012",
+  "src": "Hello, {playerName}!",
+  "tgt": "やあ、{playerName}！",
+  "ctx": "村人に話しかける場面",
+  "status": "translated",
+  "hash": "a1b2c3d4",
+  "prev_tgt": null,
+  "note": ""
+}
 ```
 
 `status` は `untranslated` / `translated` / `reviewed` / `stale` / `needs-review` / `locked` を遷移する。
