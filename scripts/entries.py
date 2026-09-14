@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 
+ENTRY_STATUSES = frozenset(
+    {"untranslated", "translated", "reviewed", "stale", "needs-review", "locked"}
+)
+
+
 def hash_of(text: str) -> str:
     """原文のハッシュを返す。ゲーム更新時の差分検出に使う。"""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
@@ -35,9 +40,13 @@ def merge_extracted(
 ) -> list[dict[str, Any]]:
     """再抽出結果を既存エントリにマージする。
 
-    - 新規id: untranslated として追加
+    - 新規id: untranslated として追加。ただしextractedのitemが"tgt"/"status"を
+      持っていればそれを使う（公式ローカライズの一部流用・翻訳メモリ・原語版から
+      確定訳が分かっている等、抽出アダプタが既知訳を提供できるケース向け）
     - hash不変: 既存エントリをそのまま維持
-    - hash変化 (status != locked): 旧訳をprev_tgtへ退避してstaleにする
+    - hash変化 (status != locked): 旧訳をprev_tgtへ退避してstaleにする。
+      この時itemが"tgt"を持っていても無視する（人手編集の上書きを避けるため）。
+      確定訳を凍結したいなら status に "locked" を渡す（locked分岐が先に短絡する）
     - status == locked: 原文が変わっても一切変更しない（凍結）
     - extractedに無い既存id: そのまま残す（削除しない）
     """
@@ -52,13 +61,16 @@ def merge_extracted(
         new_hash = hash_of(item["src"])
 
         if current is None:
+            status = item.get("status", "untranslated")
+            if status not in ENTRY_STATUSES:
+                raise ValueError(f"id={entry_id!r}: 未知のstatus {status!r}")
             merged.append(
                 {
                     "id": entry_id,
                     "src": item["src"],
-                    "tgt": "",
+                    "tgt": item.get("tgt", ""),
                     "ctx": item.get("ctx", ""),
-                    "status": "untranslated",
+                    "status": status,
                     "hash": new_hash,
                     "prev_tgt": None,
                     "note": "",

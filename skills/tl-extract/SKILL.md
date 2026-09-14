@@ -31,14 +31,20 @@ description: Use when writing an extraction adapter for a specific game's text f
 5. **中間フォーマットへマージ** — プラグインルートの `scripts/entries.py` の
    `load_jsonl` / `merge_extracted` / `save_jsonl` を使い、既存の `entries/*.jsonl` と
    マージする。新規idは`untranslated`、hashが変わったidは`stale`（旧訳は`prev_tgt`へ退避）、
-   `locked`のidは常に凍結される
+   `locked`のidは常に凍結される。既に正しい訳が分かっている場合（公式ローカライズの流用、
+   原語版から復元できる等）は、`{id, src, ctx}` に加えて `tgt`/`status` を渡せる。
+   確定訳は `status: "locked"` で出すのを推奨する（QA検証の対象外になり、再抽出で
+   原文が変わっても凍結されるため）
 6. **動作確認** — 抽出→（何も翻訳せず）`tl-inject` の逆変換で元ファイルと一致することを確認する
    （fixtureの往復テストと同じ考え方）
 
 ## 出力
 
 `entries/*.jsonl` — 1ファイルにまとめても、シーン/チャプター単位で分割してもよい
-（`tl-translate` はファイルごとに独立して処理する）。
+（`tl-translate` はファイルごとに独立して処理する。ただし各ファイルの
+Message Batchは完了まで最大24時間かかりうるうえ、`tl-translate`はファイルを逐次
+待つため、細かく分割しすぎるとN回の直列待ちになる。数ファイル〜10ファイル程度に
+まとめるのが実用的）。
 
 ## 次のステップ
 

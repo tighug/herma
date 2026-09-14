@@ -36,15 +36,30 @@ def check_glossary(src: str, tgt: str, glossary: dict[str, str]) -> bool:
 
 
 def find_inconsistent_translations(rows: list[dict]) -> dict[str, list[str]]:
-    """同一原文に対して異なる訳文が使われている箇所を検出する。未訳行は対象外。"""
+    """同一原文に対して異なる訳文が使われている箇所を検出する。未訳行は対象外。
+
+    locked（確定訳）はground truthとして比較には含めるが、locked同士だけの
+    不一致は報告しない。ゲーム内語彙全体をlockedで一括投入するプロジェクトでは
+    同一原文・別訳のlockedが大量に存在しうるため、そのノイズでレポートが埋もれる。
+    non-locked行を1件でも含む原文グループのみ報告する。
+    # ponytail: 同一原文にlockedが複数あり片方がnon-lockedと一致していてもグループ全体を報告する。
+    #   locked同士の食い違いを個別に精査したくなったら分ける
+    """
     by_src: dict[str, list[str]] = {}
+    mutable_srcs: set[str] = set()
     for row in rows:
         if row["tgt"] == "":
             continue  # 未訳なだけの行を不統一として誤検知しない
         by_src.setdefault(row["src"], [])
         if row["tgt"] not in by_src[row["src"]]:
             by_src[row["src"]].append(row["tgt"])
-    return {src: tgts for src, tgts in by_src.items() if len(tgts) > 1}
+        if row.get("status") != "locked":
+            mutable_srcs.add(row["src"])
+    return {
+        src: tgts
+        for src, tgts in by_src.items()
+        if len(tgts) > 1 and src in mutable_srcs
+    }
 
 
 def check_length_ratio(src: str, tgt: str, max_ratio: float | None) -> bool:
@@ -83,12 +98,18 @@ def run_validation(
     """全エントリを検証し、違反したものを needs-review に落としてレポートを返す。
 
     ステータスの変更は MUTABLE_ON_VIOLATION_STATUSES のエントリにのみ行う。
-    untranslated/stale/locked は違反として報告はするが、ステータスは変更しない
+    untranslated/stale は違反として報告はするが、ステータスは変更しない
     （変更すると翻訳待ちの行が永久にキューから外れてしまうため）。
+    locked は「正しいと表明済み」の凍結エントリなので検証対象外
+    （src/tgtの言語が異なる原文復元エントリ等ではプレースホルダーが
+    構造上一致せず、大量の誤検知でレポートが機能しなくなるため）。
     """
     report = Report()
 
     for row in rows:
+        if row["status"] == "locked":
+            continue
+
         entry_id = row["id"]
         src, tgt = row["src"], row["tgt"]
         row_violations: list[Violation] = []

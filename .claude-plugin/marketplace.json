@@ -10,7 +10,7 @@
     {
       "name": "herma",
       "description": "Reusable Claude Code toolkit for translating games and mods: shared JSONL entry format, batch translation via the Anthropic Message Batches API, and placeholder/glossary QA.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./",
       "author": {
         "name": "tighug",

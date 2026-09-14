@@ -173,6 +173,45 @@ def test_run_validation_does_not_unfreeze_locked_entries():
     assert rows[0]["status"] == "locked"
 
 
+def test_run_validation_excludes_locked_entries_from_report():
+    # locked は「正しいと表明済み」の凍結エントリなので検証対象外。
+    # 原文復元エントリのように src/tgt の言語が異なりプレースホルダーが
+    # 構造上一致しない場合でも、違反として報告してはならない
+    rows = [
+        {"id": "a", "src": "Hi {name}", "tgt": "固定訳（プレースホルダー無し）", "status": "locked"},
+    ]
+
+    report = validate.run_validation(rows, patterns=PATTERNS, glossary={}, max_len_ratio=None)
+
+    assert report.violations == []
+
+
+def test_find_inconsistent_translations_ignores_disagreement_among_locked_only():
+    # locked同士だけの「同一原文・別訳」は、大量の確定訳が存在するプロジェクトで
+    # レポートを埋めるノイズになるため報告しない
+    rows = [
+        {"id": "a1", "src": "Attack", "tgt": "攻撃", "status": "locked"},
+        {"id": "a2", "src": "Attack", "tgt": "こうげき", "status": "locked"},
+    ]
+
+    result = validate.find_inconsistent_translations(rows)
+
+    assert result == {}
+
+
+def test_find_inconsistent_translations_flags_locked_vs_non_locked_disagreement():
+    # locked は ground truth なので、新規翻訳がlockedの確定訳と食い違う場合は
+    # 引き続き検出する
+    rows = [
+        {"id": "a1", "src": "Attack", "tgt": "こうげき", "status": "locked"},
+        {"id": "a2", "src": "Attack", "tgt": "攻撃", "status": "translated"},
+    ]
+
+    result = validate.find_inconsistent_translations(rows)
+
+    assert result == {"Attack": ["こうげき", "攻撃"]}
+
+
 def test_run_validation_detects_glossary_violation():
     rows = [
         {"id": "a", "src": "the Sword of Dawn", "tgt": "何か", "status": "translated"},

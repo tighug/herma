@@ -116,6 +116,61 @@ def test_merge_extracted_marks_stale_and_preserves_old_translation_when_src_chan
     ]
 
 
+def test_merge_extracted_uses_tgt_and_status_provided_by_extracted_item():
+    # 抽出アダプタが原語版などから確定訳を持っている場合、newエントリに反映できる
+    existing: list[dict] = []
+    extracted = [{"id": "a", "src": "Hello", "ctx": "greeting", "tgt": "こんにちは", "status": "locked"}]
+
+    merged = entries.merge_extracted(existing, extracted)
+
+    assert merged == [
+        {
+            "id": "a",
+            "src": "Hello",
+            "tgt": "こんにちは",
+            "ctx": "greeting",
+            "status": "locked",
+            "hash": entries.hash_of("Hello"),
+            "prev_tgt": None,
+            "note": "",
+        }
+    ]
+
+
+def test_merge_extracted_rejects_unknown_status_from_extracted_item():
+    existing: list[dict] = []
+    extracted = [{"id": "a", "src": "Hello", "status": "done"}]
+
+    try:
+        entries.merge_extracted(existing, extracted)
+        assert False, "ValueError が発生するはず"
+    except ValueError:
+        pass
+
+
+def test_merge_extracted_ignores_extracted_tgt_when_src_changed_for_existing_entry():
+    # hash変化時はアダプタのtgtを使わず、既存訳をprev_tgtへ退避してstaleにする
+    # （人手編集の上書きを避けるため）。確定訳を凍結したいなら locked で出す
+    existing = [
+        {
+            "id": "a",
+            "src": "Hello",
+            "tgt": "こんにちは",
+            "ctx": "greeting",
+            "status": "translated",
+            "hash": entries.hash_of("Hello"),
+            "prev_tgt": None,
+            "note": "",
+        }
+    ]
+    extracted = [{"id": "a", "src": "Hello there", "ctx": "greeting", "tgt": "別の訳"}]
+
+    merged = entries.merge_extracted(existing, extracted)
+
+    assert merged[0]["tgt"] == "こんにちは"
+    assert merged[0]["status"] == "stale"
+
+
 def test_merge_extracted_leaves_locked_entry_completely_unchanged():
     existing = [
         {

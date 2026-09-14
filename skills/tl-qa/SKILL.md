@@ -54,9 +54,11 @@ description: Use when checking translation quality after batch translation, or w
    - 長さ超過（`max_len_ratio` 設定時）
 
    `status: needs-review` への降格は `translated`/`reviewed`/`needs-review` の行にのみ行う。
-   `untranslated`/`stale` は翻訳待ちの正常状態、`locked` は意図的な凍結なので、
-   違反として報告はしてもステータスは変更しない（変更すると `tl-translate` の
-   対象から永久に外れてしまうため）。
+   `untranslated`/`stale` は翻訳待ちの正常状態なので、違反として報告はしても
+   ステータスは変更しない（変更すると `tl-translate` の対象から永久に外れて
+   しまうため）。`locked` は「正しいと表明済み」の凍結エントリなので検証対象外
+   （報告もしない）。ただし不統一チェック（同一原文・別訳の検出）では
+   ground truthとして比較に使われる。
 3. **レポートを確認** — `qa/<ファイル名>-report.md` をユーザーに提示する。
    違反したエントリは `status: needs-review` に落ちているので、修正後は
    ステータスを手動で `translated`/`reviewed` に戻す
