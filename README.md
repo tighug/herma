@@ -18,7 +18,7 @@
 翻訳対象のゲームごとに別リポジトリ（例: `tl_<game>`）を用意し、そこにこのプラグインを入れる。
 
 ```
-/plugin marketplace add <このリポジトリのパス or URL>
+/plugin marketplace add https://github.com/tighug/herma
 /plugin install herma
 ```
 
