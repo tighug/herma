@@ -7,8 +7,9 @@
   "placeholder_patterns": [
     "\\{[^}]*\\}",
     "%[sd]",
-    "<[^>]+>",
-    "\\\\n"
+    "<[^>]+>"
   ],
+  "tgt_only_patterns": [],
+  "refusal_markers": ["I cannot", "I can't", "I'm not able", "I apologize"],
   "max_len_ratio": null
 }

@@ -17,11 +17,40 @@ def test_select_translatable_includes_untranslated_and_stale():
 
 
 def test_chunk_entries_splits_into_groups_of_given_size():
-    rows = [{"id": str(i)} for i in range(5)]
+    rows = [{"id": str(i), "src": f"src{i}"} for i in range(5)]
 
     chunks = translate.chunk_entries(rows, chunk_size=2)
 
     assert [[r["id"] for r in c] for c in chunks] == [["0", "1"], ["2", "3"], ["4"]]
+
+
+def test_chunk_entries_keeps_identical_src_in_the_same_chunk():
+    # 同一srcが別チャンクに散ると、モデルが別々に訳して訳ゆれが発生する
+    rows = [
+        {"id": "a1", "src": "Attack"},
+        {"id": "b1", "src": "Defend"},
+        {"id": "a2", "src": "Attack"},
+        {"id": "c1", "src": "Heal"},
+    ]
+
+    chunks = translate.chunk_entries(rows, chunk_size=2)
+
+    ids_by_chunk = [{r["id"] for r in c} for c in chunks]
+    assert {"a1", "a2"}.issubset(next(c for c in ids_by_chunk if "a1" in c))
+
+
+def test_chunk_entries_splits_a_group_larger_than_chunk_size_on_its_own():
+    # 1つのsrcだけでchunk_sizeを超える場合は、そのグループ内で分割する
+    # （1リクエストのmax_tokensを超えて丸ごと失敗しないように）
+    rows = [{"id": f"a{i}", "src": "Attack"} for i in range(5)]
+
+    chunks = translate.chunk_entries(rows, chunk_size=2)
+
+    assert [[r["id"] for r in c] for c in chunks] == [
+        ["a0", "a1"],
+        ["a2", "a3"],
+        ["a4"],
+    ]
 
 
 def test_apply_results_writes_back_matching_ids_and_marks_translated():
@@ -71,6 +100,29 @@ def test_apply_results_leaves_entry_untranslated_when_id_missing_from_response()
     assert rows[1]["status"] == "untranslated"
     assert rows[1]["tgt"] == ""
     assert outcome.missing_ids == ["b"]
+
+
+def test_apply_results_rejects_leaked_refusal_and_leaves_entry_translatable():
+    # idは正規だがtgtがモデルの拒否理由の説明文になっているケース
+    rows = [
+        {"id": "a", "src": "Hello", "tgt": "", "status": "untranslated", "prev_tgt": None},
+        {"id": "b", "src": "World", "tgt": "", "status": "untranslated", "prev_tgt": None},
+    ]
+    sent_ids = {"a", "b"}
+    results = [
+        {"id": "a", "tgt": "I cannot translate this content."},
+        {"id": "b", "tgt": "世界"},
+    ]
+
+    outcome = translate.apply_results(
+        rows, sent_ids, results, refusal_markers=("I cannot", "I can't")
+    )
+
+    assert rows[0]["status"] == "untranslated"
+    assert rows[0]["tgt"] == ""
+    assert rows[1]["tgt"] == "世界"
+    assert outcome.applied == ["b"]
+    assert outcome.refused_ids == ["a"]
 
 
 def test_apply_results_clears_prev_tgt_and_ignores_write_back_by_position():
@@ -308,6 +360,26 @@ def test_fetch_and_apply_results_records_failed_chunk_without_raising():
 
     assert rows[0]["status"] == "untranslated"
     assert outcome.failed_chunks == ["chunk-0 (errored)"]
+
+
+def test_fetch_and_apply_results_passes_through_refusal_markers():
+    rows = [{"id": "a", "src": "Hi", "tgt": "", "status": "untranslated", "prev_tgt": None}]
+    sent_ids_by_chunk = {"chunk-0": {"a"}}
+    client = _FakeClient(
+        [
+            _FakeBatchResult(
+                "chunk-0",
+                _FakeResult("succeeded", _FakeMessage('[{"id": "a", "tgt": "I cannot help"}]')),
+            )
+        ]
+    )
+
+    outcome = translate.fetch_and_apply_results(
+        client, "batch_x", rows, sent_ids_by_chunk, refusal_markers=("I cannot",)
+    )
+
+    assert rows[0]["status"] == "untranslated"
+    assert outcome.refused_ids == ["a"]
 
 
 def test_resolve_pending_sent_ids_keeps_ids_whose_hash_is_unchanged():

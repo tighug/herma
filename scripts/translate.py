@@ -38,8 +38,33 @@ def select_translatable(rows: list[dict]) -> list[dict]:
 
 
 def chunk_entries(rows: list[dict], chunk_size: int) -> list[list[dict]]:
-    """エントリをchunk_size件ずつのチャンクに分割する。"""
-    return [rows[i : i + chunk_size] for i in range(0, len(rows), chunk_size)]
+    """エントリをchunk_size件ずつのチャンクに分割する。
+
+    同一srcは可能な限り同じチャンクに寄せる。別チャンクに散ると、モデルが
+    別々に訳して訳ゆれが発生するため（実測: 訳ゆれ後始末だけで2,492+717+33グループ）。
+    単独でchunk_sizeを超えるグループはそのグループ内で分割する（1リクエストの
+    max_tokensを超えて丸ごと失敗しないように）。
+    """
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["src"], []).append(row)
+
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    for group in groups.values():
+        if len(group) > chunk_size:
+            if current:
+                chunks.append(current)
+                current = []
+            chunks.extend(group[i : i + chunk_size] for i in range(0, len(group), chunk_size))
+            continue
+        if current and len(current) + len(group) > chunk_size:
+            chunks.append(current)
+            current = []
+        current.extend(group)
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 @dataclass
@@ -51,15 +76,32 @@ class ApplyOutcome:
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     dropped_stale_hash_ids: list[str] = field(default_factory=list)
+    refused_ids: list[str] = field(default_factory=list)
+
+
+# idは正規なのにtgtがモデルの拒否理由の説明文になっているケースの既定マーカー。
+# 英語の定型句のみを持つ（日本語の拒否文は翻訳方向に依存するため tl.config.json の
+# refusal_markers で上書きする）。
+DEFAULT_REFUSAL_MARKERS = ("I cannot", "I can't", "I'm not able", "I apologize")
+
+
+def looks_like_leaked_refusal(tgt: str, markers: tuple[str, ...]) -> bool:
+    """idは正規なのに、tgtが拒否理由の説明文になっている応答を検出する。"""
+    return any(marker in tgt for marker in markers)
 
 
 def apply_results(
-    rows: list[dict], sent_ids: set[str], results: list[dict]
+    rows: list[dict],
+    sent_ids: set[str],
+    results: list[dict],
+    refusal_markers: tuple[str, ...] = DEFAULT_REFUSAL_MARKERS,
 ) -> ApplyOutcome:
     """バッチ応答をid照合で書き戻す。位置での書き戻しは行わない。
 
     - sent_idsに無いidの応答は破棄する（rejected_unknown_ids に記録）
     - sent_idsにあるのに応答が無いidはuntranslated/staleのまま据え置く（missing_ids に記録）
+    - tgtが拒否理由の説明文に見えるidは書き込まず、untranslated/staleのまま
+      据え置く（refused_ids に記録）。次回実行で再度翻訳対象になる
     """
     by_id = {r["id"]: r for r in rows}
     outcome = ApplyOutcome()
@@ -74,6 +116,9 @@ def apply_results(
         row = by_id.get(entry_id)
         if row is None:
             outcome.rejected_unknown_ids.append(entry_id)
+            continue
+        if looks_like_leaked_refusal(item["tgt"], refusal_markers):
+            outcome.refused_ids.append(entry_id)
             continue
         row["tgt"] = item["tgt"]
         row["status"] = "translated"
@@ -226,7 +271,11 @@ def wait_for_batch(client, batch_id: str, poll_interval_sec: float = 10.0):
 
 
 def fetch_and_apply_results(
-    client, batch_id: str, rows: list[dict], sent_ids_by_chunk: dict[str, set[str]]
+    client,
+    batch_id: str,
+    rows: list[dict],
+    sent_ids_by_chunk: dict[str, set[str]],
+    refusal_markers: tuple[str, ...] = DEFAULT_REFUSAL_MARKERS,
 ) -> ApplyOutcome:
     """バッチ結果をcustom_idでチャンクに、idでエントリに突き合わせて書き戻す。
 
@@ -254,10 +303,11 @@ def fetch_and_apply_results(
         except json.JSONDecodeError:
             total.failed_chunks.append(f"{result.custom_id} (unparsable response)")
             continue
-        outcome = apply_results(rows, sent_ids, parsed)
+        outcome = apply_results(rows, sent_ids, parsed, refusal_markers=refusal_markers)
         total.applied.extend(outcome.applied)
         total.rejected_unknown_ids.extend(outcome.rejected_unknown_ids)
         total.missing_ids.extend(outcome.missing_ids)
+        total.refused_ids.extend(outcome.refused_ids)
 
     return total
 
@@ -281,6 +331,7 @@ def run(project_dir) -> ApplyOutcome:
     style_guide = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
     glossary_tsv = (project_dir / "glossary.tsv").read_text(encoding="utf-8")
     system_blocks = build_system_blocks(style_guide, glossary_tsv, cfg["placeholder_patterns"])
+    refusal_markers = tuple(cfg.get("refusal_markers", DEFAULT_REFUSAL_MARKERS))
 
     client = anthropic.Anthropic()
     total = ApplyOutcome()
@@ -313,7 +364,9 @@ def run(project_dir) -> ApplyOutcome:
             save_pending_batch(state_path, batch_id, chunks)
 
         wait_for_batch(client, batch_id)
-        outcome = fetch_and_apply_results(client, batch_id, rows, sent_ids_by_chunk)
+        outcome = fetch_and_apply_results(
+            client, batch_id, rows, sent_ids_by_chunk, refusal_markers=refusal_markers
+        )
 
         entries_mod.save_jsonl(jsonl_path, rows)
         clear_pending_batch(state_path)
@@ -321,6 +374,7 @@ def run(project_dir) -> ApplyOutcome:
         total.rejected_unknown_ids.extend(outcome.rejected_unknown_ids)
         total.missing_ids.extend(outcome.missing_ids)
         total.failed_chunks.extend(outcome.failed_chunks)
+        total.refused_ids.extend(outcome.refused_ids)
         total.cache_read_input_tokens += outcome.cache_read_input_tokens
         total.cache_creation_input_tokens += outcome.cache_creation_input_tokens
 
@@ -334,6 +388,8 @@ if __name__ == "__main__":
         print(f"警告: 不明なidの応答を破棄しました: {outcome.rejected_unknown_ids}")
     if outcome.missing_ids:
         print(f"警告: 応答が無かったid（未訳のまま）: {outcome.missing_ids}")
+    if outcome.refused_ids:
+        print(f"警告: モデルが翻訳を拒否したid（未訳のまま。再実行で拾い直せます）: {outcome.refused_ids}")
     if outcome.failed_chunks:
         print(f"警告: 失敗したチャンク: {outcome.failed_chunks}")
     if outcome.dropped_stale_hash_ids:
