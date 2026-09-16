@@ -29,6 +29,25 @@ def test_check_placeholders_fails_when_token_count_differs():
     assert validate.check_placeholders(src, tgt, PATTERNS) is False
 
 
+def test_check_placeholders_ignores_tgt_only_tags_not_present_in_src():
+    # \RB[漢字,ルビ] は日本語化で新規に追加されるルビ記法で、原文には存在しない
+    src = "Hi {name}"
+    tgt = "\\RB[名前,なまえ]さん{name}"
+
+    assert validate.check_placeholders(
+        src, tgt, PATTERNS, tgt_only_patterns=[r"\\RB\[[^\]]*\]"]
+    ) is True
+
+
+def test_check_placeholders_still_fails_when_a_real_placeholder_is_dropped_alongside_tgt_only_tag():
+    src = "Hi {name}, you have {count} items"
+    tgt = "\\RB[名前,なまえ]さん{name}"  # {count} が欠落
+
+    assert validate.check_placeholders(
+        src, tgt, PATTERNS, tgt_only_patterns=[r"\\RB\[[^\]]*\]"]
+    ) is False
+
+
 def test_is_untranslated_true_when_tgt_is_empty():
     assert validate.is_untranslated({"src": "Hello", "tgt": ""}) is True
 
@@ -60,6 +79,23 @@ def test_check_glossary_passes_when_translation_present():
 def test_check_glossary_passes_when_term_not_in_src():
     glossary = {"Sword of Dawn": "暁の剣"}
     assert validate.check_glossary("Hello there", "こんにちは", glossary) is True
+
+
+def test_check_glossary_does_not_false_positive_on_substring_of_another_word():
+    # "Home" は "Homeless Man" の部分文字列としてマッチしてしまってはならない
+    glossary = {"Home": "家"}
+    src = "The Homeless Man is sleeping."
+    tgt = "浮浪者が眠っている。"  # "Home" 単体は含まれないが誤検知しないこと
+
+    assert validate.check_glossary(src, tgt, glossary) is True
+
+
+def test_check_glossary_still_flags_missing_translation_when_term_is_a_whole_word():
+    glossary = {"Home": "家"}
+    src = "Go back Home now."
+    tgt = "今すぐ戻れ。"  # "家" が入っていない
+
+    assert validate.check_glossary(src, tgt, glossary) is False
 
 
 def test_find_inconsistent_translations_detects_same_src_different_tgt():
@@ -109,6 +145,28 @@ def test_run_validation_flags_placeholder_violation_as_needs_review():
     assert report.violations[0].entry_id == "a"
     assert report.violations[0].kind == "placeholder"
     assert rows[0]["status"] == "needs-review"
+
+
+def test_run_validation_does_not_flag_tgt_only_tag_as_placeholder_violation():
+    rows = [
+        {
+            "id": "a",
+            "src": "Hi {name}",
+            "tgt": "\\RB[名前,なまえ]さん{name}",
+            "status": "translated",
+        }
+    ]
+
+    report = validate.run_validation(
+        rows,
+        patterns=PATTERNS,
+        glossary={},
+        max_len_ratio=None,
+        tgt_only_patterns=[r"\\RB\[[^\]]*\]"],
+    )
+
+    assert report.violations == []
+    assert rows[0]["status"] == "translated"
 
 
 def test_run_validation_leaves_clean_entry_status_untouched():
@@ -242,3 +300,32 @@ def test_render_report_produces_markdown_with_violation_sections():
 
     assert "placeholder" in markdown
     assert "a" in markdown
+
+
+def test_render_report_groups_same_message_violations_with_a_count():
+    report = validate.Report(
+        violations=[
+            validate.Violation("a", "untranslated", "未訳です"),
+            validate.Violation("b", "untranslated", "未訳です"),
+        ]
+    )
+
+    markdown = validate.render_report(report)
+
+    assert "未訳です (2件)" in markdown
+    assert "a, b" in markdown
+
+
+def test_render_report_truncates_id_list_beyond_twenty_and_shows_remaining_count():
+    ids = [f"id{i:02d}" for i in range(25)]
+    violations = [validate.Violation(i, "untranslated", "未訳です") for i in ids]
+    report = validate.Report(violations=violations)
+
+    markdown = validate.render_report(report)
+
+    assert "未訳です (25件)" in markdown
+    assert "ほか5件" in markdown
+    for shown_id in ids[:20]:
+        assert shown_id in markdown
+    for hidden_id in ids[20:]:
+        assert hidden_id not in markdown

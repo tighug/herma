@@ -38,7 +38,8 @@ description: Use when checking translation quality after batch translation, or w
    for path in sorted((project / 'entries').glob('*.jsonl')):
        rows = entries.load_jsonl(path)
        report = validate.run_validation(
-           rows, cfg['placeholder_patterns'], glossary, cfg.get('max_len_ratio')
+           rows, cfg['placeholder_patterns'], glossary, cfg.get('max_len_ratio'),
+           tgt_only_patterns=cfg.get('tgt_only_patterns', []),
        )
        entries.save_jsonl(path, rows)  # needs-review への降格を反映（対象は下記参照）
        out = project / 'qa' / f'{path.stem}-report.md'
@@ -47,11 +48,15 @@ description: Use when checking translation quality after batch translation, or w
    "
    ```
 2. **検証項目**（`scripts/validate.py`）:
-   - プレースホルダー保持（ゲームを壊す原因の第一位）
+   - プレースホルダー保持（ゲームを壊す原因の第一位）。日本語化で新規に追加してよい
+     タグ（ルビ記法など）があれば `tl.config.json` の `tgt_only_patterns` に登録する
    - 未訳検出
-   - 用語集遵守
+   - 用語集遵守（`src` 側は単語境界つきで照合するので部分文字列誤検知はしない）
    - 訳文の不統一（同一原文に異なる訳。未訳行は対象外）
    - 長さ超過（`max_len_ratio` 設定時）
+
+   レポートは同一kind・同一メッセージの違反を件数付きでまとめ、id一覧は先頭20件まで
+   表示する（超過分は「ほかN件」）。
 
    `status: needs-review` への降格は `translated`/`reviewed`/`needs-review` の行にのみ行う。
    `untranslated`/`stale` は翻訳待ちの正常状態なので、違反として報告はしても
