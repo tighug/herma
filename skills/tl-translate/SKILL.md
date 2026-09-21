@@ -20,15 +20,30 @@ description: Use when running batch translation over extracted entries, or when 
 - `ANTHROPIC_API_KEY` または `ant auth login` の認証情報が必要
 - 未設定なら、キーの発行方法（console.anthropic.com）と `ant auth login` の
   どちらかをユーザーに案内する。推測でキーを要求しない
+- APIを使えない・使わないとユーザーが決めた場合や、残りが少量の場合は、このセッションで
+  Claude が訳してよい（`CLAUDE.md` と `glossary.tsv` を読んでから訳す）。訳は
+  `[{"id": ..., "tgt": ...}]` のJSONファイルに書き、行を直接編集せずに次で書き込む
+  （id照合・locked保護・プレースホルダー検証が効く。一時スクリプトを都度書かない）
+  ```bash
+  uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/fix.py apply <対象プロジェクトディレクトリ> <edits.json> --dry-run
+  ```
+  拒否が無ければ `--dry-run` を外して再実行する
 - `tl.config.json` の `model` に設定されたモデルを使う（勝手に安いモデルへ変更しない）
 
 ## 手順
 
 1. **設定確認** — `tl.config.json` の `model` / `chunk_size` / `placeholder_patterns` を確認する
-2. **対象件数の見積もり** — プラグインルートの `scripts/translate.py` の
+2. **prefill（モデルを呼ばずに埋める）** — 見積もりの前に、訳す語が無い行（プレースホルダーと
+   記号だけ）と、同一原文の既訳が1種類だけある行（locked を優先、次に translated。
+   プレースホルダー構成が一致するときだけ）を埋める。埋めた行は `translated` になり、
+   `tl-qa` の対象に残る。`--dry-run` で件数だけ見られる
+   ```bash
+   uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/fix.py prefill <対象プロジェクトディレクトリ>
+   ```
+3. **対象件数の見積もり** — プラグインルートの `scripts/translate.py` の
    `select_translatable` で対象件数（`untranslated`/`stale`）を数え、概算コストを
    ユーザーに提示してから実行の可否を確認する
-3. **実行** — `<PLUGIN_ROOT>` は実際のプラグインルートの絶対パスに置き換えること
+4. **実行** — `<PLUGIN_ROOT>` は実際のプラグインルートの絶対パスに置き換えること
    ```bash
    uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/translate.py <対象プロジェクトディレクトリ>
    ```
@@ -49,17 +64,17 @@ description: Use when running batch translation over extracted entries, or when 
    - id は正規だが `tgt` が「この内容は翻訳できません」等の拒否理由の説明文になっている
      応答（`tl.config.json` の `refusal_markers` に一致）は書き込まず、未翻訳のまま残す
      （次回実行時に再度翻訳対象になる）
-4. **結果を報告** — 翻訳件数、破棄件数、欠落件数、拒否件数、失敗チャンク、原文変更により
+5. **結果を報告** — 翻訳件数、破棄件数、欠落件数、拒否件数、失敗チャンク、原文変更により
    破棄したid、キャッシュ実測（`cache_read_input_tokens`/`cache_creation_input_tokens`）
    をユーザーに伝える。キャッシュのreadが0のままなら、systemプロンプトに揺れる内容
    （日時など）が混入していないか確認する。拒否件数が多い場合は、原文の内容的に
    モデルが翻訳を避けている可能性があるとユーザーに伝える
-5. **バッチ投入直後にプロセスが落ちた場合** — `.tl/`に状態ファイルが無いのにバッチだけ
+6. **バッチ投入直後にプロセスが落ちた場合** — `.tl/`に状態ファイルが無いのにバッチだけ
    投入済み、という状況が理論上あり得る（投入と状態保存の間でのクラッシュ）。
    その場合は `client.messages.batches.list()` で最近のバッチを確認し、
    該当しそうなものがあれば `.tl/batch-<entriesファイル名>.json` を手動で作るか、
    ユーザーに状況を伝えて判断を仰ぐ
-6. **`tl-qa` へ** — 翻訳後は必ず `tl-qa` で品質チェックを行う
+7. **`tl-qa` へ** — 翻訳後は必ず `tl-qa` で品質チェックを行う
 
 ## stale エントリの再翻訳について
 

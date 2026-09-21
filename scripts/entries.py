@@ -36,7 +36,10 @@ def save_jsonl(path: str | Path, records: list[dict[str, Any]]) -> None:
 
 
 def merge_extracted(
-    existing: list[dict[str, Any]], extracted: list[dict[str, Any]]
+    existing: list[dict[str, Any]],
+    extracted: list[dict[str, Any]],
+    *,
+    unfreeze_changed_locked: bool = False,
 ) -> list[dict[str, Any]]:
     """再抽出結果を既存エントリにマージする。
 
@@ -47,7 +50,10 @@ def merge_extracted(
     - hash変化 (status != locked): 旧訳をprev_tgtへ退避してstaleにする。
       この時itemが"tgt"を持っていても無視する（人手編集の上書きを避けるため）。
       確定訳を凍結したいなら status に "locked" を渡す（locked分岐が先に短絡する）
-    - status == locked: 原文が変わっても一切変更しない（凍結）
+    - status == locked: 原文が変わっても一切変更しない（凍結）。
+      ただし unfreeze_changed_locked=True なら、hash が変わった locked も上の
+      hash変化と同じく stale にする（MOD・ゲーム更新で原作訳の枠の原文が変わり、
+      凍結したままだと旧版の原文のまま残って新版では原語が出てしまうケース向け）
     - extractedに無い既存id: そのまま残す（削除しない）
     """
     by_id = {e["id"]: e for e in existing}
@@ -76,7 +82,7 @@ def merge_extracted(
                     "note": "",
                 }
             )
-        elif current["status"] == "locked":
+        elif current["status"] == "locked" and not unfreeze_changed_locked:
             merged.append(current)
         elif current["hash"] == new_hash:
             merged.append(current)

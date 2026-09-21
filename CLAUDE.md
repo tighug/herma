@@ -23,7 +23,8 @@ herma@herma` で入れ替えること（詳細はREADME参照）。`plugin.json`
   アダプタで、このリポジトリには存在しない。`fixtures/fake_game/{extract,inject}.py` がその参照実装
   （かつ `tests/test_fake_game_roundtrip.py` の往復テスト対象）。
 - **共通層（このリポジトリの本体）**: `scripts/entries.py`（JSONL入出力・hash差分マージ）、
-  `scripts/translate.py`（Message Batches API ランナー）、`scripts/validate.py`（QA検証器）。
+  `scripts/translate.py`（Message Batches API ランナー）、`scripts/validate.py`（QA検証器）、
+  `scripts/fix.py`（翻訳後の修正CLI: id指定の書き込み・prefill・訳ゆれ統一・status集計）。
 - **`skills/tl-*/SKILL.md` が唯一のユーザー導線**。`scripts/` は直接叩かれず、スキル手順書に
   埋め込まれた `uv run --project <PLUGIN_ROOT> ...` から呼ばれる。スキルの挙動を変えたら
   対応する `SKILL.md` の手順も必ず更新する。
@@ -41,6 +42,9 @@ herma@herma` で入れ替えること（詳細はREADME参照）。`plugin.json`
   再アタッチ時は `resolve_pending_sent_ids` が送信時hashと現在hashを突き合わせ、
   その間に原文が変わったidを「送信済み」から除外する。
 - **`locked` エントリは原文が変わっても一切変更しない**（`scripts/entries.py` の `merge_extracted`）。
+  例外は呼び出し側が `unfreeze_changed_locked=True` を明示したときだけで、そのときも原文が
+  変わった locked を通常の hash 変化と同じく `stale` にする以外は変えない。`scripts/fix.py` の
+  `apply` も locked への書き込みを拒否する。
 - **QA違反による `needs-review` 降格は `MUTABLE_ON_VIOLATION_STATUSES` のステータスにのみ行う**
   （`scripts/validate.py`）。`untranslated`/`stale` を降格させると `select_translatable` の
   対象から永久に外れてしまう。`locked` も対象外。

@@ -329,3 +329,27 @@ def test_render_report_truncates_id_list_beyond_twenty_and_shows_remaining_count
         assert shown_id in markdown
     for hidden_id in ids[20:]:
         assert hidden_id not in markdown
+
+
+def test_is_untranslated_false_when_src_has_no_translatable_text():
+    entry = {"src": "{name}<br>%s", "tgt": "{name}<br>%s"}
+    assert validate.is_untranslated(entry, PATTERNS) is False
+
+
+def test_is_untranslated_still_true_when_src_has_words_besides_placeholders():
+    entry = {"src": "{name} Hello", "tgt": "{name} Hello"}
+    assert validate.is_untranslated(entry, PATTERNS) is True
+
+
+def test_has_translatable_text_detects_non_latin_letters():
+    assert validate.has_translatable_text("{name}こんにちは", PATTERNS) is True
+    assert validate.has_translatable_text("{name}...!? 123", PATTERNS) is False
+
+
+def test_run_validation_does_not_flag_placeholder_only_row_as_untranslated():
+    rows = [{"id": "a", "src": "{name}!", "tgt": "{name}!", "status": "translated"}]
+
+    report = validate.run_validation(rows, patterns=PATTERNS, glossary={}, max_len_ratio=None)
+
+    assert report.violations == []
+    assert rows[0]["status"] == "translated"

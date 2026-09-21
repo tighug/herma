@@ -24,7 +24,13 @@ description: Use when writing a translation write-back adapter for a specific ga
 2. **`scripts/inject.py` を書く** — `entries/*.jsonl` を読み、id をキーに元の構造へ
    訳文（`tgt`。空なら`src`のまま）を書き戻す関数を実装する
 3. **`locked`/`needs-review` の扱いを確認** — `needs-review` のまま書き戻すと未修正の
-   訳が配布されてしまうため、`tl-qa` の指摘が解消されているか事前に確認する
+   訳が配布されてしまうため、`tl-qa` の指摘が解消されているか事前に確認する。
+   書き戻しの前に status の内訳を出し、`untranslated`（原語のまま出る）・`stale`
+   （原文は新版、訳は旧版のまま出る。原文照合もすり抜ける）・`needs-review` が
+   残っていればユーザーに伝える
+   ```bash
+   uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/fix.py status <PROJECT_DIR>
+   ```
 4. **出力** — `dist/` に元のゲーム形式のファイルとして書き出す
 5. **往復確認** — 何も翻訳していない状態（全エントリ `untranslated`）で
    `extract` → `inject` を行い、元ファイルと構造が一致することを確認する

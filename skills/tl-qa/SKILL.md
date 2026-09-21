@@ -66,10 +66,27 @@ description: Use when checking translation quality after batch translation, or w
    ground truthとして比較に使われる。
 3. **レポートを確認** — `qa/<ファイル名>-report.md` をユーザーに提示する。
    違反したエントリは `status: needs-review` に落ちているので、修正後は
-   ステータスを手動で `translated`/`reviewed` に戻す
-4. **機械検証で拾えない問題を指摘** — 口調の揺れ、不自然な訳、文脈に合わない訳語などは
+   手順6の `apply` で `translated`/`reviewed` に戻す
+4. **訳ゆれを統一** — レポートの `inconsistent`（同一原文・別訳）は、チャンクをまたいで
+   同じ原文が別々に訳されると構造的に起きる。まずレポートだけ出す
+   ```bash
+   uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/fix.py unify <PROJECT_DIR>
+   ```
+   `qa/unify-report.md` をユーザーに見せ、了承を得てから `--fix` を付けて書き戻す。
+   正とする訳は locked の最頻訳（locked が割れていて最頻訳の占有率が
+   `unify_dominance_threshold`（既定0.9）未満なら据え置く）、locked が無ければ過半数、
+   過半数も無ければid順で最初の行の訳。書き換えるのは `translated`/`needs-review` だけで、
+   `reviewed`・`stale`・`locked` には触れない。擬音や文脈で訳し分ける語など、統一しては
+   いけない原文は `tl.config.json` の `unify_skip_srcs` に列挙する
+5. **機械検証で拾えない問題を指摘** — 口調の揺れ、不自然な訳、文脈に合わない訳語などは
    Claude が `entries/*.jsonl` を読んで気づいた点をユーザーに報告する
-5. **修正の反映** — ユーザーの指示に応じて `tgt` を直接編集し、`status` を更新する
+6. **修正の反映** — `entries/*.jsonl` を直接編集せず、修正を `[{"id": ..., "tgt": ..., "note": ...}]`
+   （`note` は任意）のJSONファイルに書いて書き込む。未知のid・locked・プレースホルダー
+   不一致・重複idは拒否され、旧訳は `prev_tgt` に退避される
+   ```bash
+   uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/fix.py apply <PROJECT_DIR> <edits.json> --dry-run
+   ```
+   拒否が無ければ `--dry-run` を外す。ユーザーが確認済みの修正なら `--status reviewed` を付ける
 
 ## 次のステップ
 

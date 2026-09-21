@@ -34,7 +34,11 @@ description: Use when writing an extraction adapter for a specific game's text f
    `locked`のidは常に凍結される。既に正しい訳が分かっている場合（公式ローカライズの流用、
    原語版から復元できる等）は、`{id, src, ctx}` に加えて `tgt`/`status` を渡せる。
    確定訳は `status: "locked"` で出すのを推奨する（QA検証の対象外になり、再抽出で
-   原文が変わっても凍結されるため）
+   原文が変わっても凍結されるため）。
+   ただし「原作訳を復元した locked の枠を、MOD・ゲームの更新が別の原文に差し替える」
+   ことがある対象では、`merge_extracted(existing, extracted, unfreeze_changed_locked=True)`
+   を使う。原文が変わった locked も `stale`（旧訳は `prev_tgt`）になって再翻訳の対象に入る
+   （凍結したままだと旧版の原文を抱えたまま残り、新版では原語のまま表示される）
 6. **動作確認** — 抽出→（何も翻訳せず）`tl-inject` の逆変換で元ファイルと一致することを確認する
    （fixtureの往復テストと同じ考え方）
 

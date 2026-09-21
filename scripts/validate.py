@@ -32,10 +32,22 @@ def check_placeholders(
     return src_tokens == tgt_tokens
 
 
-def is_untranslated(entry: dict) -> bool:
-    """訳文が空、または原文と完全一致しているかを判定する。"""
+def has_translatable_text(src: str, patterns: list[str]) -> bool:
+    """プレースホルダーを取り除いた残りに、訳すべき文字（言語を問わない字）があるか。"""
+    stripped = re.sub("|".join(patterns), "", src) if patterns else src
+    return re.search(r"[^\W\d_]", stripped) is not None
+
+
+def is_untranslated(entry: dict, patterns: list[str] = ()) -> bool:
+    """訳文が空、または原文と完全一致しているかを判定する。
+
+    原文にプレースホルダーと記号しか無い（訳す語が無い）行は、tgt == src が正しい訳なので
+    未訳扱いしない。
+    """
     tgt = entry["tgt"]
-    return tgt == "" or tgt == entry["src"]
+    if tgt == "":
+        return True
+    return tgt == entry["src"] and has_translatable_text(entry["src"], patterns)
 
 
 def check_glossary(src: str, tgt: str, glossary: dict[str, str]) -> bool:
@@ -131,7 +143,7 @@ def run_validation(
         src, tgt = row["src"], row["tgt"]
         row_violations: list[Violation] = []
 
-        if is_untranslated(row):
+        if is_untranslated(row, patterns):
             row_violations.append(Violation(entry_id, "untranslated", "未訳です"))
         else:
             if not check_placeholders(src, tgt, patterns, tgt_only_patterns):

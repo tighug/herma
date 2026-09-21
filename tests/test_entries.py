@@ -189,3 +189,37 @@ def test_merge_extracted_leaves_locked_entry_completely_unchanged():
     merged = entries.merge_extracted(existing, extracted)
 
     assert merged == existing
+
+
+def _locked(src: str, tgt: str) -> dict:
+    return {
+        "id": "a",
+        "src": src,
+        "tgt": tgt,
+        "ctx": "",
+        "status": "locked",
+        "hash": entries.hash_of(src),
+        "prev_tgt": None,
+        "note": "",
+    }
+
+
+def test_merge_extracted_unfreezes_locked_as_stale_when_src_changed_and_opted_in():
+    existing = [_locked("Hello", "こんにちは")]
+    extracted = [{"id": "a", "src": "Hello there", "ctx": ""}]
+
+    merged = entries.merge_extracted(existing, extracted, unfreeze_changed_locked=True)
+
+    assert merged[0]["src"] == "Hello there"
+    assert merged[0]["status"] == "stale"
+    assert merged[0]["prev_tgt"] == "こんにちは"
+    assert merged[0]["hash"] == entries.hash_of("Hello there")
+
+
+def test_merge_extracted_keeps_locked_unchanged_when_src_same_even_if_opted_in():
+    existing = [_locked("Hello", "こんにちは")]
+    extracted = [{"id": "a", "src": "Hello", "ctx": ""}]
+
+    merged = entries.merge_extracted(existing, extracted, unfreeze_changed_locked=True)
+
+    assert merged == existing
