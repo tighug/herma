@@ -28,6 +28,7 @@ def test_extract_flattens_nested_dict_into_id_src_ctx_rows():
     row = next(r for r in rows if r["id"] == "scenes/scene01/0001")
     assert row["src"] == "Hello, {playerName}!\nWelcome to the village."
     assert row["ctx"] == "scenes/scene01"
+    assert row["scene"] == "scenes/scene01"
 
 
 def test_roundtrip_reproduces_original_structure_before_translation():

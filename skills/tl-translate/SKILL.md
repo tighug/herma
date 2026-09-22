@@ -48,9 +48,14 @@ description: Use when running batch translation over extracted entries, or when 
    uv run --project <PLUGIN_ROOT> python <PLUGIN_ROOT>/scripts/translate.py <対象プロジェクトディレクトリ>
    ```
    内部で行われること:
-   - `CLAUDE.md`（翻訳方針）+ `glossary.tsv`（用語集）+ プレースホルダー規則を
-     systemプロンプトとしてキャッシュ付きで組み立てる
-   - `chunk_size` 件ずつチャンク化してバッチ投入（`custom_id: chunk-N`）
+   - 直訳調を避ける訳し方の原則（プラグイン固定）+ `CLAUDE.md`（翻訳方針）+
+     `glossary.tsv`（用語集）+ プレースホルダー規則を systemプロンプトとしてキャッシュ付きで組み立てる
+   - エントリに `scene` があれば、場面ごとに行順のまま、翻訳対象が `chunk_size` 件に
+     なるところで区切る。同じ場面の訳済み行・原作訳（locked）は参照行（`ref`）として同梱し、
+     チャンクに出る `speaker` の原作訳の台詞を口調の手本（`voices`）に添える。
+     `scene` の無い行は同一原文をまとめて `chunk_size` 件ずつにする。
+     `scene`/`speaker` が無いプロジェクトでは `tl-extract` のアダプタに追加するよう提案する
+   - チャンクごとにバッチ投入（`custom_id: chunk-N`）
    - 投入直後にバッチIDと送信id・送信時hash一覧を `.tl/batch-<entriesファイル名>.json`
      へ保存する。次回このコマンドを実行したとき、同じファイルに対応する状態ファイルが
      残っていれば**新規投入せずそのバッチに再アタッチする**（バッチは最大24時間かかるため、

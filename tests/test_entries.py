@@ -223,3 +223,50 @@ def test_merge_extracted_keeps_locked_unchanged_when_src_same_even_if_opted_in()
     merged = entries.merge_extracted(existing, extracted, unfreeze_changed_locked=True)
 
     assert merged == existing
+
+
+def test_merge_extracted_adds_scene_and_speaker_to_new_entry():
+    extracted = [{"id": "a", "src": "Hello", "ctx": "", "scene": "Map1/e1", "speaker": "Alice"}]
+
+    merged = entries.merge_extracted([], extracted)
+
+    assert merged[0]["scene"] == "Map1/e1"
+    assert merged[0]["speaker"] == "Alice"
+
+
+def test_merge_extracted_refreshes_scene_and_speaker_when_hash_unchanged():
+    existing = [
+        {
+            "id": "a",
+            "src": "Hello",
+            "tgt": "こんにちは",
+            "ctx": "",
+            "status": "translated",
+            "hash": entries.hash_of("Hello"),
+            "prev_tgt": None,
+            "note": "",
+        }
+    ]
+    extracted = [{"id": "a", "src": "Hello", "ctx": "", "scene": "Map1/e1", "speaker": "Alice"}]
+
+    merged = entries.merge_extracted(existing, extracted)
+
+    assert merged[0] == {**existing[0], "scene": "Map1/e1", "speaker": "Alice"}
+
+
+def test_merge_extracted_refreshes_scene_and_speaker_on_frozen_locked_without_touching_translation():
+    existing = [_locked("Hello", "こんにちは")]
+    extracted = [{"id": "a", "src": "Hello there", "ctx": "", "scene": "Map1/e1", "speaker": "Alice"}]
+
+    merged = entries.merge_extracted(existing, extracted)
+
+    assert merged[0] == {**_locked("Hello", "こんにちは"), "scene": "Map1/e1", "speaker": "Alice"}
+
+
+def test_merge_extracted_drops_speaker_when_adapter_no_longer_emits_it():
+    existing = [{**_locked("Hello", "こんにちは"), "speaker": "Alice"}]
+    extracted = [{"id": "a", "src": "Hello", "ctx": ""}]
+
+    merged = entries.merge_extracted(existing, extracted)
+
+    assert "speaker" not in merged[0]

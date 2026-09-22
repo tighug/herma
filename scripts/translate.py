@@ -67,6 +67,55 @@ def chunk_entries(rows: list[dict], chunk_size: int) -> list[list[dict]]:
     return chunks
 
 
+def build_chunks(rows: list[dict], chunk_size: int) -> list[list[dict]]:
+    """1ファイル分の全行からチャンクを作る。行順（=抽出アダプタが出した実行順）は崩さない。
+
+    - sceneを持つ行: 同じsceneの行を行順のままスライスし、翻訳対象がchunk_size件に
+      達したところで切る。スライス内の非対象行（locked/translated等）は参照行として
+      同梱する（前後の文脈と原作訳の手本になる）。同一srcの集約はしない —
+      集約すると場面が切り刻まれ、行単位の直訳（she→「彼女」等）に戻るため
+    - sceneを持たない行（UI文字列など）: 従来どおり chunk_entries で同一srcを集約する
+    - 翻訳対象の無いsceneはチャンクにしない
+    """
+    scenes: dict[str, list[dict]] = {}
+    unscened: list[dict] = []
+    for row in rows:
+        if "scene" in row:
+            scenes.setdefault(row["scene"], []).append(row)
+        elif row["status"] in TRANSLATABLE_STATUSES:
+            unscened.append(row)
+
+    chunks: list[list[dict]] = []
+    # ponytail: 対象より前の参照行は数を絞らない。1場面が数百行の locked を抱える形式で
+    # 入力トークンが膨らむようなら、対象の前後N行に絞る
+    for scene_rows in scenes.values():
+        current: list[dict] = []
+        targets = 0
+        for row in scene_rows:
+            current.append(row)
+            if row["status"] in TRANSLATABLE_STATUSES:
+                targets += 1
+                if targets == chunk_size:
+                    chunks.append(current)
+                    current, targets = [], 0
+        if targets:
+            chunks.append(current)
+    return chunks + chunk_entries(unscened, chunk_size)
+
+
+def speaker_samples(rows: list[dict], limit: int = 10) -> dict[str, list[dict]]:
+    """話者ごとに原作訳（locked）の行を最大limit件集める。モデルに渡す口調の手本。"""
+    samples: dict[str, list[dict]] = {}
+    for row in rows:
+        speaker = row.get("speaker")
+        if not speaker or row["status"] != "locked" or not row.get("tgt"):
+            continue
+        bucket = samples.setdefault(speaker, [])
+        if len(bucket) < limit:
+            bucket.append({"src": row["src"], "tgt": row["tgt"]})
+    return samples
+
+
 @dataclass
 class ApplyOutcome:
     applied: list[str] = field(default_factory=list)
@@ -129,38 +178,88 @@ def apply_results(
     return outcome
 
 
-def build_user_content(chunk: list[dict]) -> str:
+def build_user_content(chunk: list[dict], samples: dict[str, list[dict]] | None = None) -> str:
     """チャンクをモデルに渡すJSON文字列に変換する。
 
-    staleエントリには旧訳(prev_tgt)を添え、差分翻訳のヒントにする。
+    - 翻訳対象: id/src/ctx（+speaker）。staleには旧訳(prev_tgt)を差分翻訳のヒントに添える
+    - 参照行（訳のある非対象行）: idを付けず ref=true で渡す。書き戻し対象にならない
+    - voices: チャンクに出る話者の原作訳の手本（speaker_samples の結果から抜き出す）
     """
-    items = []
+    lines = []
     for entry in chunk:
-        item = {"id": entry["id"], "src": entry["src"], "ctx": entry.get("ctx", "")}
-        if entry.get("status") == "stale" and entry.get("prev_tgt"):
-            item["prev_tgt"] = entry["prev_tgt"]
-        items.append(item)
-    return json.dumps(items, ensure_ascii=False)
+        if entry["status"] in TRANSLATABLE_STATUSES:
+            item = {"id": entry["id"], "src": entry["src"], "ctx": entry.get("ctx", "")}
+            if entry.get("status") == "stale" and entry.get("prev_tgt"):
+                item["prev_tgt"] = entry["prev_tgt"]
+        elif entry.get("tgt"):
+            item = {"src": entry["src"], "tgt": entry["tgt"], "ref": True}
+        else:
+            continue
+        if entry.get("speaker"):
+            item["speaker"] = entry["speaker"]
+        lines.append(item)
+
+    content: dict = {"lines": lines}
+    speakers = dict.fromkeys(e["speaker"] for e in chunk if e.get("speaker"))
+    samples = samples or {}
+    voices = {s: samples[s] for s in speakers if s in samples}
+    if voices:
+        content["voices"] = voices
+    return json.dumps(content, ensure_ascii=False)
+
+
+# 英語の直訳調を避ける、ゲームに依存しない原則。unholy-maiden-sop-jp の再翻訳パスで
+# 直訳調が消えたプロンプトから、ゲーム固有の数値・語彙を除いたもの。
+NATURALNESS_RULES = """## 訳し方の原則
+- 英語原文は「何が起きて、誰が何を言ったか」を知るための材料。語順・構文・単語の対応は写さない
+- 場面を最初から最後まで読んでから訳す。前後の行と一続きの日本語になるようにする
+- 日本語で要らない主語・代名詞・所有格は書かない（she/her を毎回「彼女」、your を「あなたの」と訳さない。
+  「彼女の髪に」→「髪に」）。前の行で分かっている主語・目的語は繰り返さない
+- 英語の慣用句・比喩・間投詞・罵倒は字義どおりに訳さず、日本語で同じ場面に言うことばに置き換える
+  （×「おお、神よ」 Oh god）
+- 直訳構文を使わない: 「〜することができる」「〜する必要がある」「〜というわけじゃない」(It's not like)
+  「〜させてくれ」(let me)、無生物主語（×「その光景が彼女を興奮させた」→○「その光景に興奮した」）、
+  by の受け身（×「男によって押し倒された」→○「男に押し倒された」）
+- just / so / very / please / and などを毎回「ただ」「とても」「お願い」「そして」と訳さない。
+  強調は語尾や言い回しで出す
+- 1つの英文を2つに割る、2つを1つにまとめる、語順を入れ替える、は自由。ただし行（id）をまたいで
+  内容を動かさない（各行はゲーム内で別々に表示される）
+- 意味と情報量は保つ。語を削って意味や文法が欠けてはいけない
+"""
 
 
 def build_system_blocks(style_guide: str, glossary_tsv: str, patterns: list[str]) -> list[dict]:
     """全リクエスト共通のsystemプロンプトを組み立てる。末尾にキャッシュを付ける。"""
     instructions = (
-        "あなたはゲームのローカライズ翻訳者です。以下の方針に従って翻訳してください。\n\n"
+        "あなたはゲームのローカライズ翻訳者です。原文を、最初から日本語で書かれていたかのような"
+        "日本語にしてください。\n\n"
+        f"{NATURALNESS_RULES}\n"
+        "以下はこのプロジェクト固有の方針です。上の原則と食い違う場合はこちらを優先してください。\n\n"
         f"## 翻訳方針\n{style_guide}\n\n"
         f"## 用語集（原文 / 訳語 / 備考）\n{glossary_tsv}\n\n"
         "## プレースホルダーの扱い\n"
         f"以下の正規表現にマッチするトークンは翻訳せず、原文のまま訳文に残してください: {patterns}\n\n"
-        "## 出力形式\n"
-        '入力は [{"id": ..., "src": ..., "ctx": ..., "prev_tgt": ...}] のJSON配列です。'
-        '出力は [{"id": ..., "tgt": ...}] のJSON配列のみを返してください。'
+        "## 入出力形式\n"
+        '入力は {"lines": [...], "voices": {...}} のJSONです。\n'
+        '- lines: 場面の行を実行順に並べたもの。id のある行 {"id", "src", "ctx", "speaker", "prev_tgt"} が'
+        "翻訳対象。prev_tgt は原文が変わる前の旧訳（差分のヒント）\n"
+        '- ref が true の行 {"src", "tgt", "speaker"} は訳済みの行（原作の訳を含む）。訳し直さず、'
+        "前後の文脈と文体の手本として読む\n"
+        "- voices: 話者ごとの原作の台詞（src → tgt）。この話者の一人称・語尾・口調はこれに合わせる\n"
+        "- speaker・voices・prev_tgt は無いことがある\n"
+        '出力は翻訳対象の行だけを [{"id": ..., "tgt": ...}] のJSON配列で返してください。'
     )
     return [
         {"type": "text", "text": instructions, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
     ]
 
 
-def build_batch_requests(chunks: list[list[dict]], cfg: dict, system_blocks: list[dict]) -> list:
+def build_batch_requests(
+    chunks: list[list[dict]],
+    cfg: dict,
+    system_blocks: list[dict],
+    samples: dict[str, list[dict]] | None = None,
+) -> list:
     """チャンクごとにMessage Batches APIのRequestを組み立てる。custom_idはチャンク番号。"""
     from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
     from anthropic.types.messages.batch_create_params import Request
@@ -174,7 +273,7 @@ def build_batch_requests(chunks: list[list[dict]], cfg: dict, system_blocks: lis
                     model=cfg["model"],
                     max_tokens=16000,
                     system=system_blocks,
-                    messages=[{"role": "user", "content": build_user_content(chunk)}],
+                    messages=[{"role": "user", "content": build_user_content(chunk, samples)}],
                     output_config={
                         "format": {"type": "json_schema", "schema": RESULT_JSON_SCHEMA}
                     },
@@ -203,13 +302,14 @@ def save_pending_batch(state_path, batch_id: str, chunks: list[list[dict]]) -> N
 
     hashも一緒に保存するのは、再アタッチまでの間に tl-extract が再実行されて
     原文が変わっていた場合に検出するため（resolve_pending_sent_ids参照）。
+    チャンク内の参照行（build_chunks参照）は送信対象ではないので記録しない。
     """
     state_path = Path(state_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "batch_id": batch_id,
         "sent_ids_by_chunk": {
-            f"chunk-{i}": [{"id": e["id"], "hash": e["hash"]} for e in chunk]
+            f"chunk-{i}": [{"id": e["id"], "hash": e["hash"]} for e in select_translatable(chunk)]
             for i, chunk in enumerate(chunks)
         },
     }
@@ -352,14 +452,14 @@ def run(project_dir) -> ApplyOutcome:
             )
             total.dropped_stale_hash_ids.extend(dropped)
         else:
-            targets = select_translatable(rows)
-            if not targets:
+            chunks = build_chunks(rows, cfg.get("chunk_size", 30))
+            if not chunks:
                 continue
-            chunks = chunk_entries(targets, cfg.get("chunk_size", 30))
-            requests = build_batch_requests(chunks, cfg, system_blocks)
+            requests = build_batch_requests(chunks, cfg, system_blocks, speaker_samples(rows))
             batch_id = client.messages.batches.create(requests=requests).id
             sent_ids_by_chunk = {
-                f"chunk-{i}": {e["id"] for e in chunk} for i, chunk in enumerate(chunks)
+                f"chunk-{i}": {e["id"] for e in select_translatable(chunk)}
+                for i, chunk in enumerate(chunks)
             }
             save_pending_batch(state_path, batch_id, chunks)
 

@@ -27,7 +27,14 @@ description: Use when writing an extraction adapter for a specific game's text f
 3. **id設計を決める** — idは再抽出しても安定していること（配列インデックスではなく、
    ファイルパス・キー名・行番号など意味のある識別子にする）
 4. **`scripts/extract.py` を書く** — 対象形式から `{id, src, ctx}` のリストを作る関数を実装する。
-   `ctx` には話者・場面・UI上の位置など、翻訳時に文脈として役立つ情報を入れる
+   `ctx` にはUI上の位置など、翻訳時に文脈として役立つ情報を入れる。
+   会話・地の文がある形式では、次の2つを**別フィールドで**出す（`ctx` の文字列に埋め込まない）:
+   - `scene` — 同じ場面として続けて読まれる行のまとまり（イベントページ・会話ファイル・
+     章など）。`tl-translate` は scene ごとに行順のまま訳し、同じ場面の訳済み行・原作訳を
+     文脈と手本として一緒に渡す。scene の無い行（UI文字列など）は同一原文をまとめて訳す
+   - `speaker` — 話者名（分かる場合）。原作訳（locked）の同じ話者の台詞が口調の手本として渡る
+   - 行は**ゲーム内の実行順**で出す（id でソートしない。`p10` が `p2` より前に来てしまう）。
+     scene/speaker は再抽出のたびに既存エントリ（locked 含む）へ反映される
 5. **中間フォーマットへマージ** — プラグインルートの `scripts/entries.py` の
    `load_jsonl` / `merge_extracted` / `save_jsonl` を使い、既存の `entries/*.jsonl` と
    マージする。新規idは`untranslated`、hashが変わったidは`stale`（旧訳は`prev_tgt`へ退避）、

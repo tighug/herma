@@ -45,7 +45,11 @@ herma@herma` で入れ替えること（詳細はREADME参照）。`plugin.json`
 - **`locked` エントリは原文が変わっても一切変更しない**（`scripts/entries.py` の `merge_extracted`）。
   例外は呼び出し側が `unfreeze_changed_locked=True` を明示したときだけで、そのときも原文が
   変わった locked を通常の hash 変化と同じく `stale` にする以外は変えない。`scripts/fix.py` の
-  `apply` も locked への書き込みを拒否する。
+  `apply` も locked への書き込みを拒否する。抽出位置のメタデータ `scene`/`speaker` だけは
+  訳ではないので、locked でも再抽出のたびに置き換える（`_with_location_meta`）。
+- **チャンクは行順（実行順）を崩さない**（`scripts/translate.py` の `build_chunks`）。
+  `scene` のある行は同一原文で集約しない（場面が切れて直訳調に戻る）。チャンク内の参照行
+  （locked/translated）は送信対象ではないので、`sent_ids`・状態ファイルには載せない。
 - **QA違反による `needs-review` 降格は `MUTABLE_ON_VIOLATION_STATUSES` のステータスにのみ行う**
   （`scripts/validate.py`）。`untranslated`/`stale` を降格させると `select_translatable` の
   対象から永久に外れてしまう。`locked` も対象外。

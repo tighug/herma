@@ -35,6 +35,16 @@ def save_jsonl(path: str | Path, records: list[dict[str, Any]]) -> None:
             f.write("\n")
 
 
+LOCATION_META_KEYS = ("scene", "speaker")
+
+
+def _with_location_meta(entry: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    """entryのscene/speakerをitemの値に置き換えた複製を返す（itemに無いキーは消す）。"""
+    updated = {k: v for k, v in entry.items() if k not in LOCATION_META_KEYS}
+    updated.update({k: item[k] for k in LOCATION_META_KEYS if k in item})
+    return updated
+
+
 def merge_extracted(
     existing: list[dict[str, Any]],
     extracted: list[dict[str, Any]],
@@ -55,6 +65,9 @@ def merge_extracted(
       hash変化と同じく stale にする（MOD・ゲーム更新で原作訳の枠の原文が変わり、
       凍結したままだと旧版の原文のまま残って新版では原語が出てしまうケース向け）
     - extractedに無い既存id: そのまま残す（削除しない）
+    - scene/speaker（任意）: 上のどの分岐でも itemの値で毎回置き換える（itemに無ければ
+      キーを消す）。訳ではなく抽出位置のメタデータなので locked でも凍結しない。
+      tl-translate が場面単位のチャンク化と話者の手本に使う
     """
     by_id = {e["id"]: e for e in existing}
     merged: list[dict[str, Any]] = []
@@ -97,6 +110,7 @@ def merge_extracted(
                     "prev_tgt": current["tgt"],
                 }
             )
+        merged[-1] = _with_location_meta(merged[-1], item)
 
     for entry_id, current in by_id.items():
         if entry_id not in seen_ids:

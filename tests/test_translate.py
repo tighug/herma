@@ -149,7 +149,7 @@ def test_build_user_content_includes_id_src_ctx_for_new_entry():
 
     import json
     parsed = json.loads(content)
-    assert parsed == [{"id": "a", "src": "Hello", "ctx": "greeting"}]
+    assert parsed == {"lines": [{"id": "a", "src": "Hello", "ctx": "greeting"}]}
 
 
 def test_build_user_content_includes_prev_tgt_hint_for_stale_entry():
@@ -167,9 +167,155 @@ def test_build_user_content_includes_prev_tgt_hint_for_stale_entry():
 
     import json
     parsed = json.loads(content)
-    assert parsed == [
-        {"id": "a", "src": "Hello there", "ctx": "greeting", "prev_tgt": "こんにちは"}
+    assert parsed == {
+        "lines": [{"id": "a", "src": "Hello there", "ctx": "greeting", "prev_tgt": "こんにちは"}]
+    }
+
+
+def _row(id_, status="untranslated", scene=None, speaker=None, src=None, tgt=""):
+    row = {"id": id_, "src": src or f"src-{id_}", "tgt": tgt, "ctx": "", "status": status,
+           "hash": f"h-{id_}", "prev_tgt": None}
+    if scene is not None:
+        row["scene"] = scene
+    if speaker is not None:
+        row["speaker"] = speaker
+    return row
+
+
+def test_build_chunks_keeps_scene_rows_in_file_order_with_refs():
+    # id を文字列ソートすると p10 が p2 より先に来る。行順（実行順）を保つこと
+    rows = [
+        _row("s/p2", scene="s"),
+        _row("s/p10", status="locked", scene="s", tgt="原作"),
+        _row("s/p11", scene="s"),
     ]
+
+    chunks = translate.build_chunks(rows, chunk_size=30)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["s/p2", "s/p10", "s/p11"]]
+
+
+def test_build_chunks_does_not_pull_identical_src_across_scenes():
+    rows = [
+        _row("a1", scene="a", src="Yes"),
+        _row("a2", scene="a", src="No"),
+        _row("b1", scene="b", src="Yes"),
+    ]
+
+    chunks = translate.build_chunks(rows, chunk_size=2)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["a1", "a2"], ["b1"]]
+
+
+def test_build_chunks_splits_a_scene_when_targets_reach_chunk_size():
+    rows = [
+        _row("1", scene="s"),
+        _row("2", status="locked", scene="s", tgt="x"),
+        _row("3", scene="s"),
+        _row("4", scene="s"),
+        _row("5", status="locked", scene="s", tgt="y"),
+    ]
+
+    chunks = translate.build_chunks(rows, chunk_size=2)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["1", "2", "3"], ["4", "5"]]
+
+
+def test_build_chunks_skips_scenes_without_targets():
+    rows = [_row("1", status="locked", scene="done", tgt="x"), _row("2", scene="todo")]
+
+    chunks = translate.build_chunks(rows, chunk_size=30)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["2"]]
+
+
+def test_build_chunks_groups_identical_src_for_rows_without_scene():
+    rows = [
+        _row("1", src="OK"),
+        _row("2", src="Cancel"),
+        _row("3", src="OK"),
+        _row("4", status="translated", src="Back", tgt="戻る"),
+    ]
+
+    chunks = translate.build_chunks(rows, chunk_size=2)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["1", "3"], ["2"]]
+
+
+def test_build_user_content_sends_speaker_and_refs_without_id():
+    chunk = [
+        _row("1", status="locked", scene="s", speaker="Alice", src="Hi.", tgt="やあ。"),
+        _row("2", scene="s", speaker="Bob", src="Hello."),
+        _row("3", status="untranslated", scene="s", src="Empty ref"),  # 対象
+    ]
+
+    import json
+    parsed = json.loads(translate.build_user_content(chunk))
+
+    assert parsed["lines"] == [
+        {"src": "Hi.", "tgt": "やあ。", "speaker": "Alice", "ref": True},
+        {"id": "2", "src": "Hello.", "ctx": "", "speaker": "Bob"},
+        {"id": "3", "src": "Empty ref", "ctx": ""},
+    ]
+
+
+def test_build_user_content_attaches_voices_only_for_speakers_in_chunk():
+    samples = {"Alice": [{"src": "Hi.", "tgt": "やあ。"}], "Carol": [{"src": "Yo.", "tgt": "よう。"}]}
+    chunk = [_row("2", scene="s", speaker="Alice"), _row("3", scene="s", speaker="Bob")]
+
+    import json
+    parsed = json.loads(translate.build_user_content(chunk, samples))
+
+    assert parsed["voices"] == {"Alice": [{"src": "Hi.", "tgt": "やあ。"}]}
+
+
+def test_build_user_content_omits_voices_when_no_samples_match():
+    chunk = [_row("2", scene="s", speaker="Bob")]
+
+    import json
+    parsed = json.loads(translate.build_user_content(chunk, {}))
+
+    assert "voices" not in parsed
+
+
+def test_speaker_samples_collects_locked_lines_per_speaker_up_to_limit():
+    rows = [
+        _row("1", status="locked", speaker="Alice", src="a1", tgt="A1"),
+        _row("2", status="translated", speaker="Alice", src="a2", tgt="A2"),  # 機械訳は手本にしない
+        _row("3", status="locked", speaker="Alice", src="a3", tgt="A3"),
+        _row("4", status="locked", speaker="Alice", src="a4", tgt="A4"),
+        _row("5", status="locked", src="n", tgt="N"),  # 話者なし
+    ]
+
+    samples = translate.speaker_samples(rows, limit=2)
+
+    assert samples == {"Alice": [{"src": "a1", "tgt": "A1"}, {"src": "a3", "tgt": "A3"}]}
+
+
+def test_ref_lines_in_a_chunk_are_not_counted_as_sent():
+    chunk = [_row("1", status="locked", scene="s", tgt="x"), _row("2", scene="s")]
+
+    assert [r["id"] for r in translate.select_translatable(chunk)] == ["2"]
+
+
+def test_save_pending_batch_records_only_target_rows(tmp_path):
+    state_path = tmp_path / ".tl" / "batch-dialogue.json"
+    chunk = [_row("1", status="locked", scene="s", tgt="x"), _row("2", scene="s")]
+
+    translate.save_pending_batch(state_path, "batch_1", [chunk])
+
+    assert translate.load_pending_batch(state_path)["sent_ids_by_chunk"] == {
+        "chunk-0": [{"id": "2", "hash": "h-2"}]
+    }
+
+
+def test_build_system_blocks_tells_model_not_to_copy_english_structure():
+    blocks = translate.build_system_blocks("方針", "用語集", [])
+    text = blocks[0]["text"]
+
+    assert "構文" in text
+    assert "ref" in text
+    assert "voices" in text
 
 
 def test_build_system_blocks_caches_last_block():
@@ -232,8 +378,8 @@ def test_cli_entrypoint_does_not_hit_module_not_found_when_run_as_a_script(tmp_p
 def test_save_pending_batch_then_load_pending_batch_roundtrips(tmp_path):
     state_path = tmp_path / ".tl" / "batch-dialogue.json"
     chunks = [
-        [{"id": "a", "src": "Hi", "hash": "h1"}, {"id": "b", "src": "Bye", "hash": "h2"}],
-        [{"id": "c", "src": "Yo", "hash": "h3"}],
+        [_row("a", src="Hi") | {"hash": "h1"}, _row("b", src="Bye") | {"hash": "h2"}],
+        [_row("c", src="Yo") | {"hash": "h3"}],
     ]
 
     translate.save_pending_batch(state_path, "batch_123", chunks)
@@ -253,7 +399,7 @@ def test_load_pending_batch_returns_none_when_no_state_file(tmp_path):
 def test_clear_pending_batch_removes_the_state_file(tmp_path):
     state_path = tmp_path / ".tl" / "batch-dialogue.json"
     translate.save_pending_batch(
-        state_path, "batch_123", [[{"id": "a", "src": "Hi", "hash": "h1"}]]
+        state_path, "batch_123", [[_row("a", src="Hi")]]
     )
 
     translate.clear_pending_batch(state_path)
