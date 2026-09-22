@@ -53,6 +53,31 @@ def test_adopted_requires_ratio_gap_and_sample_size():
     assert not adopted(she_rows(1, 100, 3, 100))     # 1% → 3%: 3倍だが差が5ptに届かない
 
 
+def test_undecided_keeps_large_gaps_whose_original_sample_is_too_small():
+    """原作 0%（11行）を物差しに採用はしないが、67%との差は捨てずに要判断として出す。"""
+    rows = she_rows(0, 11, 30, 40)
+
+    result = te.measure(rows, CFG)
+
+    assert result["adopted"] == [] and result["undecided"] == ["彼女"]
+    assert result["tags"] == {}  # 要判断の語ではタグを付けない
+    assert result["exemplars"]["彼女"]
+
+
+def test_report_marks_rates_with_a_small_original_sample_as_reference_only():
+    result = te.measure(she_rows(6, 12, 30, 40), CFG)  # 原作 50%（12行）を物差しにしない
+
+    report = te.render_report(result, CFG)
+
+    assert "| 彼女 |  | 75.0% | 40 | 50.0%（参考） | 12 |" in report
+
+
+def test_kanji_only_translations_count_as_prose():
+    rows = [row("t", "Really?", "本当？", "translated")]
+
+    assert te.calque_rates(rows, CFG)["本当に"] == {"n_t": 1, "t": 1.0, "n_l": 0, "l": 0.0}
+
+
 def test_avoided_lists_words_the_original_translation_rarely_renders_even_without_mt_rows():
     """翻訳前（機械翻訳の行が無い）でも、原作が訳さずに済ませている語を出せる。"""
     rows = she_rows(2, 40, 0, 0)
@@ -145,4 +170,4 @@ def test_main_writes_reports_and_never_changes_entries(tmp_path):
     saved = json.loads((tmp_path / "qa" / "translationese.json").read_text(encoding="utf-8"))
     assert len(saved["tags"]) == 10
     report = (tmp_path / "qa" / "translationese-report.md").read_text(encoding="utf-8")
-    assert "| 彼女 | ○ |" in report
+    assert "| 彼女 | 採用・原作が避ける |" in report

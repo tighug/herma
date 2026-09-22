@@ -5,7 +5,8 @@
 locked（原作の訳）と機械翻訳（locked 以外で訳がある行）で比べる
 （例: she/her を含む行で「彼女」と訳した率 原作5% / 機械翻訳26%）。
 
-- 機械翻訳の行が十分あれば、原作より明らかに多く訳出している語を「採用」し、該当行にタグを付ける
+- 機械翻訳の行が十分あれば、原作より明らかに多く訳出している語を「採用」し、該当行にタグを付ける。
+  原作の母数が足りないのに差が大きい語は「要判断」として別に出す（採用もタグ付けもしない）
 - 機械翻訳の行が無い（翻訳前の）プロジェクトでは、原作が訳さずに済ませている語（avoided）を出す。
   翻訳方針（CLAUDE.md）の「訳さずに済ませる語」に書き、翻訳調を予防するのに使う
 
@@ -61,6 +62,8 @@ MIN_GAP = 0.05
 MIN_N = 30
 # 原作が「訳さずに済ませている」とみなす率（原作の母数 MIN_N 以上）
 AVOIDED_MAX = 0.15
+# 既定で会話・地の文とみなす訳文の文字（かな・漢字）
+TARGET_SCRIPT = r"[ぁ-んァ-ヶ一-龯]"
 
 # 地の文の組み立ての翻訳調。機械翻訳は英語の文の切れ目を読点でつなぎ、進行形を「〜ている」で写しやすい。
 # 語と違って原文側の条件が無いので、同じ地の文の条件で原作と率を比べる（ある作品の実測では
@@ -81,12 +84,13 @@ class Config:
         calques = DEFAULT_CALQUES + [tuple(c) for c in t.get("extra_calques", [])]
         self.calques = {k: (re.compile(s, re.I | re.M), re.compile(g)) for k, s, g in calques}
         self.non_prose = tuple(t.get("non_prose_id_prefixes", []))
-        self.target_script = re.compile(t.get("target_script", r"[ぁ-んァ-ヶ]"))
+        self.target_script = re.compile(t.get("target_script", TARGET_SCRIPT))
         patterns = cfg.get("placeholder_patterns", [])
         self.token = re.compile("|".join(patterns)) if patterns else None
         self.min_ratio = t.get("min_ratio", MIN_RATIO)
         self.min_gap = t.get("min_gap", MIN_GAP)
         self.min_n = t.get("min_n", MIN_N)
+        self.avoided_max = t.get("avoided_max", AVOIDED_MAX)
 
     def strip(self, text: str) -> str:
         return self.token.sub("", text) if self.token else text
@@ -125,18 +129,24 @@ def calque_rates(rows: list[dict], cfg: Config) -> dict[str, dict]:
     return out
 
 
+def _exceeds(r: dict, cfg: Config) -> bool:
+    return r["n_t"] >= cfg.min_n and r["t"] >= cfg.min_ratio * r["l"] and r["t"] - r["l"] >= cfg.min_gap
+
+
 def adopted(rates: dict[str, dict], cfg: Config) -> list[str]:
     """機械翻訳が原作より明らかに多く訳出している語。"""
-    return [
-        k for k, r in rates.items()
-        if r["n_t"] >= cfg.min_n and r["n_l"] >= cfg.min_n
-        and r["t"] >= cfg.min_ratio * r["l"] and r["t"] - r["l"] >= cfg.min_gap
-    ]
+    return [k for k, r in rates.items() if r["n_l"] >= cfg.min_n and _exceeds(r, cfg)]
+
+
+def undecided(rates: dict[str, dict], cfg: Config) -> list[str]:
+    """差は大きいが原作の母数が足りない語。母数が小さいことは差が無いことを意味しない
+    （機械翻訳 67% / 原作 0%・11行）ので捨てずに出し、人が原作の行を読んで決める。"""
+    return [k for k, r in rates.items() if 0 < r["n_l"] < cfg.min_n and _exceeds(r, cfg)]
 
 
 def avoided(rates: dict[str, dict], cfg: Config) -> list[str]:
     """原作が訳さずに済ませている語（翻訳前のプロジェクトで、翻訳方針に書く候補）。"""
-    return [k for k, r in rates.items() if r["n_l"] >= cfg.min_n and r["l"] <= AVOIDED_MAX]
+    return [k for k, r in rates.items() if r["n_l"] >= cfg.min_n and r["l"] <= cfg.avoided_max]
 
 
 def exemplars(rows: list[dict], key: str, cfg: Config, k: int = 4, max_len: int = 40) -> list[dict]:
@@ -229,12 +239,14 @@ def measure(
     rates = calque_rates(rows, cfg)
     keys = adopted(rates, cfg)
     avoid = avoided(rates, cfg)
+    pending = undecided(rates, cfg)
     return {
         "rates": rates,
         "adopted": keys,
+        "undecided": pending,
         "avoided": avoid,
         "narration_rates": narration_rates(rows, narration_ids, cfg),
-        "exemplars": {k: exemplars(rows, k, cfg) for k in dict.fromkeys(keys + avoid)},
+        "exemplars": {k: exemplars(rows, k, cfg) for k in dict.fromkeys(keys + pending + avoid)},
         "tags": flag_rows(rows, keys, cfg, narration_ids, exclude_ids),
     }
 
@@ -246,15 +258,21 @@ def render_report(result: dict, cfg: Config) -> str:
         "",
         "英語原文にその語がある行だけを母数にした訳出率（会話・地の文のみ）。",
         f"採用 = 機械翻訳が原作の{cfg.min_ratio:g}倍以上・{cfg.min_gap:.0%}以上高い・母数が両側とも{cfg.min_n}行以上。",
-        f"原作が避ける = 原作の率が{AVOIDED_MAX:.0%}以下・母数{cfg.min_n}行以上（翻訳方針に書く候補）。",
+        f"要判断 = 差は採用と同じだが原作の母数が{cfg.min_n}行未満。原作の手本を読んで決める。",
+        f"原作が避ける = 原作の率が{cfg.avoided_max:.0%}以下・母数{cfg.min_n}行以上（翻訳方針に書く候補）。",
+        f"原作の母数が{cfg.min_n}行未満の率は（参考）。物差しにしない。",
         "",
-        "| 訳語 | 採用 | 原作が避ける | 機械翻訳 | 母数 | 原作 | 母数 |",
-        "|---|---|---|---|---|---|---|",
+        "| 訳語 | 判定 | 機械翻訳 | 母数 | 原作 | 母数 |",
+        "|---|---|---|---|---|---|",
     ]
     for k, r in rates.items():
-        a = "○" if k in result["adopted"] else ""
-        v = "○" if k in result["avoided"] else ""
-        lines.append(f"| {k} | {a} | {v} | {r['t']:.1%} | {r['n_t']} | {r['l']:.1%} | {r['n_l']} |")
+        marks = [
+            label for label, keys in (
+                ("採用", result["adopted"]), ("要判断", result["undecided"]), ("原作が避ける", result["avoided"])
+            ) if k in keys
+        ]
+        orig = f"{r['l']:.1%}" + ("（参考）" if r["n_l"] < cfg.min_n else "")
+        lines.append(f"| {k} | {'・'.join(marks)} | {r['t']:.1%} | {r['n_t']} | {orig} | {r['n_l']} |")
     lines += ["", "## 地の文の組み立て", "", "| 指標 | 機械翻訳 | 母数 | 原作 | 母数 |", "|---|---|---|---|---|"]
     for k, r in result["narration_rates"].items():
         lines.append(f"| {k} | {r['t']:.1%} | {r['n_t']} | {r['l']:.1%} | {r['n_l']} |")
@@ -284,7 +302,8 @@ def main(argv: list[str] | None = None) -> dict:
     (qa / "translationese.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     (qa / "translationese-report.md").write_text(render_report(result, cfg), encoding="utf-8")
     print(
-        f"採用 {len(result['adopted'])}語 / 原作が避ける {len(result['avoided'])}語 / "
+        f"採用 {len(result['adopted'])}語 / 要判断 {len(result['undecided'])}語 / "
+        f"原作が避ける {len(result['avoided'])}語 / "
         f"タグ {len(result['tags'])}行 -> {qa / 'translationese-report.md'}"
     )
     return result

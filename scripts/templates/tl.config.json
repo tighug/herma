@@ -11,5 +11,9 @@
   ],
   "tgt_only_patterns": [],
   "refusal_markers": ["I cannot", "I can't", "I'm not able", "I apologize"],
-  "max_len_ratio": null
+  "max_len_ratio": null,
+  "translationese": {
+    "extra_calques": [],
+    "non_prose_id_prefixes": []
+  }
 }

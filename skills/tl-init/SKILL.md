@@ -23,7 +23,9 @@ description: Use when starting a new game/mod translation project, or when the u
    - プレースホルダーの記法（例: `{playerName}`、`%s`、`<color=...>`タグなど）。プラグインルートの
      `fixtures/fake_game/dialogue.json` の例を見せて説明するとよい
 3. **雛形を展開** — プラグインルートの `scripts/templates/` の各ファイルを対象ディレクトリにコピーする
-   - `tl.config.json` — ヒアリング内容で `<GAME_NAME>` 等のプレースホルダーを埋める
+   - `tl.config.json` — ヒアリング内容で `<GAME_NAME>` 等のプレースホルダーを埋める。
+     `translationese` 節は `tl-qa` の翻訳調の測定の設定（作品固有の語 `extra_calques`、名前・説明文など
+     測らない枠の id 接頭辞 `non_prose_id_prefixes`）。分からなければ空のままでよい
    - `CLAUDE.md` — ゲーム名を埋め、翻訳方針は空欄のまま（後で `tl-extract`/翻訳中に育てていく）
    - `glossary.tsv`
    - `gitignore` → `.gitignore` としてコピー
