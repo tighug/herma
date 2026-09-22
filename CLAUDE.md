@@ -24,7 +24,8 @@ herma@herma` で入れ替えること（詳細はREADME参照）。`plugin.json`
   （かつ `tests/test_fake_game_roundtrip.py` の往復テスト対象）。
 - **共通層（このリポジトリの本体）**: `scripts/entries.py`（JSONL入出力・hash差分マージ）、
   `scripts/translate.py`（Message Batches API ランナー）、`scripts/validate.py`（QA検証器）、
-  `scripts/fix.py`（翻訳後の修正CLI: id指定の書き込み・prefill・訳ゆれ統一・status集計）。
+  `scripts/fix.py`（翻訳後の修正CLI: id指定の書き込み・prefill・訳ゆれ統一・status集計）、
+  `scripts/translationese.py`（原作訳 locked を物差しにした翻訳調の測定。status は変えない）。
 - **`skills/tl-*/SKILL.md` が唯一のユーザー導線**。`scripts/` は直接叩かれず、スキル手順書に
   埋め込まれた `uv run --project <PLUGIN_ROOT> ...` から呼ばれる。スキルの挙動を変えたら
   対応する `SKILL.md` の手順も必ず更新する。

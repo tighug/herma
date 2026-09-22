@@ -29,7 +29,7 @@
 | `tl-init`      | 新規ゲーム翻訳プロジェクトの雛形（`tl.config.json`・`CLAUDE.md`・ディレクトリ構造）を展開する |
 | `tl-extract`   | 対象ゲームのテキスト形式を調査し、抽出アダプタ（`scripts/extract.py`）を書く                  |
 | `tl-translate` | Message Batches API で未翻訳/staleなエントリを一括翻訳する                                    |
-| `tl-qa`        | プレースホルダー保持・用語集遵守・訳文の不統一・長さ超過を機械検証し、訳ゆれ統一と修正を反映する |
+| `tl-qa`        | プレースホルダー保持・用語集遵守・訳文の不統一・長さ超過を機械検証し、訳ゆれ統一と修正を反映する。原作訳（locked）と比べて翻訳調も測る |
 | `tl-inject`    | 訳文を元の形式へ書き戻すアダプタ（`scripts/inject.py`）を書く                                 |
 
 ## 中間フォーマット
@@ -68,7 +68,7 @@ uv sync
 uv run pytest
 ```
 
-`scripts/` 配下の共通ロジック（JSONL入出力・hash差分・バッチ翻訳のid照合・検証器・修正CLI）は
+`scripts/` 配下の共通ロジック（JSONL入出力・hash差分・バッチ翻訳のid照合・検証器・修正CLI・翻訳調の測定）は
 `tests/` でユニットテストされている。`fixtures/fake_game/` は実ゲームに依存しない
 往復テスト（extract→translate→inject でプレースホルダーが保持されること等）に使う
 架空ゲームデータで、`tl-extract`/`tl-inject` の実装例も兼ねる。
