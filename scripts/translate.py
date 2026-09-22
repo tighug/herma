@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import itertools
 import json
 import sys
 import time
@@ -67,39 +68,36 @@ def chunk_entries(rows: list[dict], chunk_size: int) -> list[list[dict]]:
     return chunks
 
 
+# 翻訳対象の前後に同梱する参照行の上限。場面全体を送ると locked の多い原作訳流用
+# プロジェクトで入力が膨らむ（celesphonia 実測: 対象1,107行に対し場面全体で参照行約4,400行）
+CONTEXT_ROWS = 10
+
+
 def build_chunks(rows: list[dict], chunk_size: int) -> list[list[dict]]:
     """1ファイル分の全行からチャンクを作る。行順（=抽出アダプタが出した実行順）は崩さない。
 
-    - sceneを持つ行: 同じsceneの行を行順のままスライスし、翻訳対象がchunk_size件に
-      達したところで切る。スライス内の非対象行（locked/translated等）は参照行として
-      同梱する（前後の文脈と原作訳の手本になる）。同一srcの集約はしない —
+    - sceneを持つ行: 同じsceneが連続する行の並びを1場面とし、翻訳対象をchunk_size件ずつに
+      区切る。各チャンクには対象の前後CONTEXT_ROWS行までの非対象行（locked/translated等）を
+      参照行として同梱する（前後の文脈と原作訳の手本になる）。窓は隣のチャンクの対象の手前で
+      止め、同じ対象を2つのチャンクに入れない。同一srcの集約はしない —
       集約すると場面が切り刻まれ、行単位の直訳（she→「彼女」等）に戻るため
     - sceneを持たない行（UI文字列など）: 従来どおり chunk_entries で同一srcを集約する
     - 翻訳対象の無いsceneはチャンクにしない
     """
-    scenes: dict[str, list[dict]] = {}
-    unscened: list[dict] = []
-    for row in rows:
-        if "scene" in row:
-            scenes.setdefault(row["scene"], []).append(row)
-        elif row["status"] in TRANSLATABLE_STATUSES:
-            unscened.append(row)
-
     chunks: list[list[dict]] = []
-    # ponytail: 対象より前の参照行は数を絞らない。1場面が数百行の locked を抱える形式で
-    # 入力トークンが膨らむようなら、対象の前後N行に絞る
-    for scene_rows in scenes.values():
-        current: list[dict] = []
-        targets = 0
-        for row in scene_rows:
-            current.append(row)
-            if row["status"] in TRANSLATABLE_STATUSES:
-                targets += 1
-                if targets == chunk_size:
-                    chunks.append(current)
-                    current, targets = [], 0
-        if targets:
-            chunks.append(current)
+    unscened: list[dict] = []
+    for scene, run in itertools.groupby(rows, key=lambda r: r.get("scene")):
+        run = list(run)
+        if scene is None:
+            unscened.extend(select_translatable(run))
+            continue
+        idx = [i for i, r in enumerate(run) if r["status"] in TRANSLATABLE_STATUSES]
+        for start in range(0, len(idx), chunk_size):
+            part = idx[start : start + chunk_size]
+            lo = max(part[0] - CONTEXT_ROWS, idx[start - 1] + 1 if start else 0)
+            end = start + chunk_size
+            hi = min(part[-1] + CONTEXT_ROWS + 1, idx[end] if end < len(idx) else len(run))
+            chunks.append(run[lo:hi])
     return chunks + chunk_entries(unscened, chunk_size)
 
 

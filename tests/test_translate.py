@@ -221,6 +221,37 @@ def test_build_chunks_splits_a_scene_when_targets_reach_chunk_size():
     assert [[r["id"] for r in c] for c in chunks] == [["1", "2", "3"], ["4", "5"]]
 
 
+def test_build_chunks_trims_refs_far_from_targets(monkeypatch):
+    monkeypatch.setattr(translate, "CONTEXT_ROWS", 1)
+    rows = [
+        _row("far", status="locked", scene="s", tgt="x"),
+        _row("near", status="locked", scene="s", tgt="y"),
+        _row("t", scene="s"),
+        _row("after", status="locked", scene="s", tgt="z"),
+        _row("far2", status="locked", scene="s", tgt="w"),
+    ]
+
+    chunks = translate.build_chunks(rows, chunk_size=30)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["near", "t", "after"]]
+
+
+def test_build_chunks_context_window_never_includes_targets_of_another_chunk():
+    rows = [_row("1", scene="s"), _row("2", scene="s"), _row("3", scene="s")]
+
+    chunks = translate.build_chunks(rows, chunk_size=1)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["1"], ["2"], ["3"]]
+
+
+def test_build_chunks_does_not_merge_non_contiguous_runs_of_the_same_scene():
+    rows = [_row("a1", scene="a"), _row("b1", scene="b"), _row("a2", scene="a")]
+
+    chunks = translate.build_chunks(rows, chunk_size=30)
+
+    assert [[r["id"] for r in c] for c in chunks] == [["a1"], ["b1"], ["a2"]]
+
+
 def test_build_chunks_skips_scenes_without_targets():
     rows = [_row("1", status="locked", scene="done", tgt="x"), _row("2", scene="todo")]
 

@@ -34,6 +34,7 @@ description: Use when writing an extraction adapter for a specific game's text f
      文脈と手本として一緒に渡す。scene の無い行（UI文字列など）は同一原文をまとめて訳す
    - `speaker` — 話者名（分かる場合）。原作訳（locked）の同じ話者の台詞が口調の手本として渡る
    - 行は**ゲーム内の実行順**で出す（id でソートしない。`p10` が `p2` より前に来てしまう）。
+     同じ scene の行は連続して出す（離れた位置に同じ scene が再び出ても別の場面として扱われる）。
      scene/speaker は再抽出のたびに既存エントリ（locked 含む）へ反映される
 5. **中間フォーマットへマージ** — プラグインルートの `scripts/entries.py` の
    `load_jsonl` / `merge_extracted` / `save_jsonl` を使い、既存の `entries/*.jsonl` と
